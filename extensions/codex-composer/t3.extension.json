@@ -1,0 +1,7 @@
+{
+  "id": "codex-composer",
+  "name": "Codex Composer",
+  "server": "dist/server.js",
+  "web": "dist/web.js",
+  "enabled": true
+}
