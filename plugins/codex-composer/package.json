@@ -1,0 +1,13 @@
+{
+  "name": "@t3tools/plugin-codex-composer",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo 'build wiring not added yet'"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/plugin-sdk": "workspace:*"
+  }
+}

@@ -73,6 +73,19 @@ it.effect("accepts git.preparePullRequestThread requests", () =>
   }),
 );
 
+it.effect("accepts prompts.list requests", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeWebSocketRequest({
+      id: "req-prompts-1",
+      body: {
+        _tag: WS_METHODS.promptsList,
+        cwd: "/repo",
+      },
+    });
+    assert.strictEqual(parsed.body._tag, WS_METHODS.promptsList);
+  }),
+);
+
 it.effect("accepts typed websocket push envelopes with sequence", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeWsResponse({
