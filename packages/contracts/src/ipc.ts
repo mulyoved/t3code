@@ -24,6 +24,13 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import type {
+  PluginBootstrap,
+  PluginProcedureCallInput,
+  PluginRegistryUpdatedPayload,
+} from "./plugin";
+import type { SkillsListInput, SkillsListResult } from "./skill";
+import type { PromptsListInput, PromptsListResult } from "./prompt";
 import type { ServerConfig } from "./server";
 import type {
   TerminalClearInput,
@@ -128,6 +135,17 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  plugins: {
+    getBootstrap: () => Promise<PluginBootstrap>;
+    callProcedure: (input: PluginProcedureCallInput) => Promise<unknown>;
+    onRegistryUpdated: (callback: (payload: PluginRegistryUpdatedPayload) => void) => () => void;
+  };
+  skills: {
+    list: (input: SkillsListInput) => Promise<SkillsListResult>;
+  };
+  prompts: {
+    list: (input: PromptsListInput) => Promise<PromptsListResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

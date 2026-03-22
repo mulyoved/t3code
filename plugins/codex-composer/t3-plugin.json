@@ -1,0 +1,9 @@
+{
+  "id": "codex-composer",
+  "name": "Codex Composer",
+  "version": "0.0.1",
+  "hostApiVersion": "1",
+  "enabled": true,
+  "serverEntry": "dist/server.js",
+  "webEntry": "dist/web.js"
+}

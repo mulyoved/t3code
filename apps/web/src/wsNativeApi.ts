@@ -87,7 +87,6 @@ export function createWsNativeApi(): NativeApi {
       }
     }
   });
-
   const api: NativeApi = {
     dialogs: {
       pickFolder: async () => {
@@ -114,6 +113,24 @@ export function createWsNativeApi(): NativeApi {
     projects: {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
+    },
+    plugins: {
+      getBootstrap: () => transport.request(WS_METHODS.pluginsGetBootstrap),
+      callProcedure: (input) => transport.request(WS_METHODS.pluginsCallProcedure, input),
+      onRegistryUpdated: (callback) =>
+        transport.subscribe(
+          WS_CHANNELS.pluginsRegistryUpdated,
+          (message) => callback(message.data),
+          {
+            replayLatest: true,
+          },
+        ),
+    },
+    skills: {
+      list: (input) => transport.request(WS_METHODS.skillsList, input),
+    },
+    prompts: {
+      list: (input) => transport.request(WS_METHODS.promptsList, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>

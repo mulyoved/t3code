@@ -78,6 +78,9 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { listAvailableSkills } from "./skills.ts";
+import { listAvailablePrompts } from "./prompts.ts";
+import { createPluginManager } from "./plugins/manager.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -257,6 +260,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const pluginManager = yield* Effect.tryPromise({
+    try: () => createPluginManager({ cwd }),
+    catch: (cause) => new ServerLifecycleError({ operation: "createPluginManager", cause }),
+  });
+  yield* Effect.addFinalizer(() =>
+    Effect.tryPromise({
+      try: () => pluginManager.close(),
+      catch: (cause) => new ServerLifecycleError({ operation: "closePluginManager", cause }),
+    }).pipe(Effect.ignoreCause({ log: false }), Effect.asVoid),
+  );
 
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
@@ -289,6 +302,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     logOutgoingPush,
   });
   yield* readiness.markPushBusReady;
+  const unsubscribePluginUpdates = pluginManager.subscribeToRegistryUpdates((ids) => {
+    void Effect.runPromise(
+      pushBus.publishAll(WS_CHANNELS.pluginsRegistryUpdated, {
+        ids,
+      }),
+    );
+  });
+  yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribePluginUpdates()));
   yield* keybindingsManager.start.pipe(
     Effect.mapError(
       (cause) => new ServerLifecycleError({ operation: "keybindingsRuntimeStart", cause }),
@@ -485,6 +506,36 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           if (!res.writableEnded) {
             res.end();
           }
+          return;
+        }
+
+        if (url.pathname.startsWith("/__plugins/")) {
+          const match = /^\/__plugins\/([^/]+)\/web\.js$/.exec(url.pathname);
+          const pluginId = match?.[1] ? decodeURIComponent(match[1]) : null;
+          if (!pluginId) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+          const webEntry = pluginManager.getWebEntry(pluginId);
+          if (!webEntry) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+          const data = yield* fileSystem
+            .readFile(webEntry.filePath)
+            .pipe(Effect.catch(() => Effect.succeed(null)));
+          if (!data) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+          respond(
+            200,
+            {
+              "Content-Type": "text/javascript; charset=utf-8",
+              "Cache-Control": "no-store",
+            },
+            data,
+          );
           return;
         }
 
@@ -774,6 +825,47 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         );
         return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.pluginsGetBootstrap: {
+        return pluginManager.getBootstrap();
+      }
+
+      case WS_METHODS.pluginsCallProcedure: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => pluginManager.callProcedure(body.pluginId, body.procedure, body.payload),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to call plugin procedure: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.skillsList: {
+        const body = stripRequestTag(request.body);
+        return {
+          skills: yield* Effect.tryPromise({
+            try: () => listAvailableSkills(body),
+            catch: (cause) =>
+              new RouteRequestError({
+                message: `Failed to list skills: ${String(cause)}`,
+              }),
+          }),
+        };
+      }
+
+      case WS_METHODS.promptsList: {
+        const body = stripRequestTag(request.body);
+        return {
+          prompts: yield* Effect.tryPromise({
+            try: () => listAvailablePrompts(body),
+            catch: (cause) =>
+              new RouteRequestError({
+                message: `Failed to list prompts: ${String(cause)}`,
+              }),
+          }),
+        };
       }
 
       case WS_METHODS.shellOpenInEditor: {
