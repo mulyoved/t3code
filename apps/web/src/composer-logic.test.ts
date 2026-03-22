@@ -60,6 +60,48 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects workspace picker query after /workspace", () => {
+    const text = "/workspace src/com";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-workspace",
+      query: "src/com",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects skills picker query after /skills", () => {
+    const text = "/skills rea";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-skills",
+      query: "rea",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects $skill trigger at token start", () => {
+    const text = "Use $rea";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "skill-mention",
+      query: "rea",
+      rangeStart: "Use ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("does not detect $skill trigger in the middle of a word", () => {
+    const text = "price$rea";
+
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
   it("detects @path trigger in the middle of existing text", () => {
     // User typed @ between "inspect " and "in this sentence"
     const text = "Please inspect @in this sentence";

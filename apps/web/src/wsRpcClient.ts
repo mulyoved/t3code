@@ -50,6 +50,17 @@ export interface WsRpcClient {
     readonly searchEntries: RpcUnaryMethod<typeof WS_METHODS.projectsSearchEntries>;
     readonly writeFile: RpcUnaryMethod<typeof WS_METHODS.projectsWriteFile>;
   };
+  readonly plugins: {
+    readonly getBootstrap: RpcUnaryNoArgMethod<typeof WS_METHODS.pluginsGetBootstrap>;
+    readonly callProcedure: RpcUnaryMethod<typeof WS_METHODS.pluginsCallProcedure>;
+    readonly subscribeRegistry: RpcStreamMethod<typeof WS_METHODS.subscribePluginsRegistryUpdates>;
+  };
+  readonly skills: {
+    readonly list: RpcUnaryMethod<typeof WS_METHODS.skillsList>;
+  };
+  readonly prompts: {
+    readonly list: RpcUnaryMethod<typeof WS_METHODS.promptsList>;
+  };
   readonly shell: {
     readonly openInEditor: (input: {
       readonly cwd: Parameters<NativeApi["shell"]["openInEditor"]>[0];
@@ -128,6 +139,22 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
         transport.request((client) => client[WS_METHODS.projectsSearchEntries](input)),
       writeFile: (input) =>
         transport.request((client) => client[WS_METHODS.projectsWriteFile](input)),
+    },
+    plugins: {
+      getBootstrap: () => transport.request((client) => client[WS_METHODS.pluginsGetBootstrap]({})),
+      callProcedure: (input) =>
+        transport.request((client) => client[WS_METHODS.pluginsCallProcedure](input)),
+      subscribeRegistry: (listener) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribePluginsRegistryUpdates]({}),
+          listener,
+        ),
+    },
+    skills: {
+      list: (input) => transport.request((client) => client[WS_METHODS.skillsList](input)),
+    },
+    prompts: {
+      list: (input) => transport.request((client) => client[WS_METHODS.promptsList](input)),
     },
     shell: {
       openInEditor: (input) =>

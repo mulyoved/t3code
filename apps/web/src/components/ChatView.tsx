@@ -4,6 +4,7 @@ import {
   type ClaudeCodeEffort,
   type MessageId,
   type ModelSelection,
+  type PromptSummary,
   type ProjectScript,
   type ProviderKind,
   type ProjectEntry,
@@ -27,6 +28,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
+import { promptsListQueryOptions } from "~/lib/promptReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -197,6 +199,12 @@ import {
   useServerConfig,
   useServerKeybindings,
 } from "~/rpc/serverState";
+import { PluginSlot, usePluginComposerItems } from "../plugins/host";
+import {
+  buildComposerMenuItems,
+  resolveSecondaryComposerMenuState,
+  type SecondaryComposerMenuState,
+} from "../plugins/composerBridge";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -205,6 +213,7 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const EMPTY_AVAILABLE_PROMPTS: PromptSummary[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
@@ -513,6 +522,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const [secondaryComposerMenu, setSecondaryComposerMenu] =
+    useState<SecondaryComposerMenuState | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
   const [pendingPullRequestSetupRequest, setPendingPullRequestSetupRequest] =
@@ -1243,71 +1254,42 @@ export default function ChatView({ threadId }: ChatViewProps) {
       limit: 80,
     }),
   );
+  const promptsQuery = useQuery(promptsListQueryOptions({ cwd: gitCwd }));
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const availablePrompts = promptsQuery.data?.prompts ?? EMPTY_AVAILABLE_PROMPTS;
+  const pluginComposerItems = usePluginComposerItems({
+    triggerKind:
+      composerTriggerKind === "slash-command" ||
+      composerTriggerKind === "slash-workspace" ||
+      composerTriggerKind === "slash-skills" ||
+      composerTriggerKind === "skill-mention"
+        ? composerTriggerKind
+        : null,
+    query:
+      composerTriggerKind === "path" || composerTriggerKind === "slash-model"
+        ? ""
+        : (composerTrigger?.query ?? ""),
+    threadId,
+    cwd: gitCwd,
+  });
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
-    if (!composerTrigger) return [];
-    if (composerTrigger.kind === "path") {
-      return workspaceEntries.map((entry) => ({
-        id: `path:${entry.kind}:${entry.path}`,
-        type: "path",
-        path: entry.path,
-        pathKind: entry.kind,
-        label: basenameOfPath(entry.path),
-        description: entry.parentPath ?? "",
-      }));
-    }
-
-    if (composerTrigger.kind === "slash-command") {
-      const slashCommandItems = [
-        {
-          id: "slash:model",
-          type: "slash-command",
-          command: "model",
-          label: "/model",
-          description: "Switch response model for this thread",
-        },
-        {
-          id: "slash:plan",
-          type: "slash-command",
-          command: "plan",
-          label: "/plan",
-          description: "Switch this thread into plan mode",
-        },
-        {
-          id: "slash:default",
-          type: "slash-command",
-          command: "default",
-          label: "/default",
-          description: "Switch this thread back to normal chat mode",
-        },
-      ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const query = composerTrigger.query.trim().toLowerCase();
-      if (!query) {
-        return [...slashCommandItems];
-      }
-      return slashCommandItems.filter(
-        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
-      );
-    }
-
-    return searchableModelOptions
-      .filter(({ searchSlug, searchName, searchProvider }) => {
-        const query = composerTrigger.query.trim().toLowerCase();
-        if (!query) return true;
-        return (
-          searchSlug.includes(query) || searchName.includes(query) || searchProvider.includes(query)
-        );
-      })
-      .map(({ provider, providerLabel, slug, name }) => ({
-        id: `model:${provider}:${slug}`,
-        type: "model",
-        provider,
-        model: slug,
-        label: name,
-        description: `${providerLabel} · ${slug}`,
-      }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
-  const composerMenuOpen = Boolean(composerTrigger);
+    return buildComposerMenuItems({
+      composerTrigger,
+      secondaryComposerMenu,
+      workspaceEntries,
+      availablePrompts,
+      pluginComposerItems: pluginComposerItems.items,
+      searchableModelOptions,
+    });
+  }, [
+    composerTrigger,
+    availablePrompts,
+    pluginComposerItems.items,
+    searchableModelOptions,
+    secondaryComposerMenu,
+    workspaceEntries,
+  ]);
+  const composerMenuOpen = Boolean(composerTrigger || secondaryComposerMenu);
   const activeComposerMenuItem = useMemo(
     () =>
       composerMenuItems.find((item) => item.id === composerHighlightedItemId) ??
@@ -2151,6 +2133,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     setExpandedWorkGroups({});
     setPullRequestDialogState(null);
+    setSecondaryComposerMenu(null);
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
       setPlanSidebarOpen(true);
@@ -3524,6 +3507,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
       if (item.type === "path") {
+        setSecondaryComposerMenu(null);
         const replacement = `@${item.path} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
@@ -3541,9 +3525,66 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      if (item.type === "skill") {
+        setSecondaryComposerMenu(null);
+        const replacement = item.replacementText;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
       if (item.type === "slash-command") {
-        if (item.command === "model") {
-          const replacement = "/model ";
+        if (item.onSelect) {
+          setComposerHighlightedItemId(null);
+          void Promise.resolve(item.onSelect())
+            .then(async (result) => {
+              if (!result || result.type === "none") {
+                return;
+              }
+              if (result.type === "open-secondary") {
+                void resolveSecondaryComposerMenuState({
+                  title: result.title,
+                  items: result.items,
+                }).then(setSecondaryComposerMenu);
+                return;
+              }
+              setSecondaryComposerMenu(null);
+              if (result.type === "replace-trigger") {
+                const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+                  snapshot.value,
+                  trigger.rangeEnd,
+                  result.text,
+                );
+                applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, result.text, {
+                  expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+                });
+                return;
+              }
+              applyPromptReplacement(snapshot.expandedCursor, snapshot.expandedCursor, result.text);
+            })
+            .catch((error) => {
+              toastManager.add({
+                type: "error",
+                title: "Plugin command failed",
+                description: error instanceof Error ? error.message : "Unknown error",
+              });
+            });
+          return;
+        }
+        if (item.action === "insert") {
+          setSecondaryComposerMenu(null);
+          const replacement = `/${item.command} `;
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
             snapshot.value,
             trigger.rangeEnd,
@@ -3560,7 +3601,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           return;
         }
-        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        setSecondaryComposerMenu(null);
+        const nextInteractionMode = item.command === "plan" ? "plan" : "default";
+        void handleInteractionModeChange(nextInteractionMode);
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
@@ -3569,6 +3612,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+
+      setSecondaryComposerMenu(null);
       onProviderModelSelect(item.provider, item.model);
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
         expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -3582,6 +3627,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       handleInteractionModeChange,
       onProviderModelSelect,
       resolveActiveComposerTrigger,
+      setComposerHighlightedItemId,
+      setSecondaryComposerMenu,
     ],
   );
   const onComposerMenuItemHighlighted = useCallback((itemId: string | null) => {
@@ -3605,12 +3652,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [composerHighlightedItemId, composerMenuItems],
   );
+  const isComposerPromptLoading =
+    composerTriggerKind === "slash-command" && (promptsQuery.isLoading || promptsQuery.isFetching);
   const isComposerMenuLoading =
-    composerTriggerKind === "path" &&
-    ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
-      workspaceEntriesQuery.isLoading ||
-      workspaceEntriesQuery.isFetching);
-
+    (composerTriggerKind === "path" &&
+      pathTriggerQuery.length > 0 &&
+      composerPathQueryDebouncer.state.isPending) ||
+    (composerTriggerKind === "path" &&
+      (workspaceEntriesQuery.isLoading || workspaceEntriesQuery.isFetching)) ||
+    pluginComposerItems.isLoading ||
+    isComposerPromptLoading;
   const onPromptChange = useCallback(
     (
       nextPrompt: string,
@@ -3631,6 +3682,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
+      setSecondaryComposerMenu(null);
       if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
         setComposerDraftTerminalContexts(
           threadId,
@@ -4024,7 +4076,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               ? "Add feedback to refine the plan, or leave this blank to implement it"
                               : phase === "disconnected"
                                 ? "Ask for follow-up changes or attach images"
-                                : "Ask anything, @tag files/folders, or use / to show available commands"
+                                : "Ask anything, @tag files/folders, use / for commands, or $ for skills"
                       }
                       disabled={isConnecting || isComposerApprovalState}
                     />
@@ -4281,6 +4333,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
             }}
           />
         ) : null}
+        <PluginSlot
+          slotId="thread.rightPanel.tabs"
+          renderProps={{
+            threadId: activeThread.id,
+            cwd: gitCwd,
+            projectId: activeProject?.id ?? null,
+          }}
+        />
       </div>
       {/* end horizontal flex container */}
 

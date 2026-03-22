@@ -1,7 +1,12 @@
-import { type ProjectEntry, type ProviderKind } from "@t3tools/contracts";
+import {
+  type ProjectEntry,
+  type ProviderKind,
+  type PluginComposerIcon,
+  type PluginComposerSelectResult,
+} from "@t3tools/contracts";
 import { memo, useLayoutEffect, useRef } from "react";
-import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
-import { BotIcon } from "lucide-react";
+import { type ComposerTriggerKind } from "../../composer-logic";
+import { BotIcon, FileSearchIcon, ListTodoIcon, SparklesIcon, TerminalIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandItem, CommandList } from "../ui/command";
@@ -19,9 +24,14 @@ export type ComposerCommandItem =
   | {
       id: string;
       type: "slash-command";
-      command: ComposerSlashCommand;
+      command: string;
+      action: "insert" | "run" | "pick";
       label: string;
       description: string;
+      keywords?: string[] | undefined;
+      icon?: PluginComposerIcon | undefined;
+      badge?: string | undefined;
+      onSelect?: () => PluginComposerSelectResult | Promise<PluginComposerSelectResult> | undefined;
     }
   | {
       id: string;
@@ -30,6 +40,14 @@ export type ComposerCommandItem =
       model: string;
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "skill";
+      label: string;
+      description: string;
+      sourceLabel: string;
+      replacementText: string;
     };
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
@@ -80,11 +98,22 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length === 0 && (
           <p className="px-3 py-2 text-muted-foreground/70 text-xs">
             {props.isLoading
-              ? "Searching workspace files..."
-              : props.triggerKind === "path"
+              ? props.triggerKind === "skill-mention" || props.triggerKind === "slash-skills"
+                ? "Loading skills..."
+                : "Searching workspace files..."
+              : props.triggerKind === "path" || props.triggerKind === "slash-workspace"
                 ? "No matching files or folders."
-                : "No matching command."}
+                : props.triggerKind === "skill-mention" || props.triggerKind === "slash-skills"
+                  ? "No matching skill."
+                  : "No matching command."}
           </p>
+        )}
+        {props.items.length > 0 && (
+          <ComposerCommandPreview
+            item={
+              props.items.find((item) => item.id === props.activeItemId) ?? props.items[0] ?? null
+            }
+          />
         )}
       </div>
     </Command>
@@ -124,17 +153,84 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         />
       ) : null}
       {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 text-muted-foreground/80" />
+        <SlashCommandIcon
+          command={props.item.command}
+          {...(props.item.icon ? { icon: props.item.icon } : {})}
+        />
       ) : null}
       {props.item.type === "model" ? (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           model
         </Badge>
       ) : null}
+      {props.item.type === "skill" ? (
+        <SparklesIcon className="size-4 text-muted-foreground/80" />
+      ) : null}
       <span className="flex min-w-0 items-center gap-1.5 truncate">
         <span className="truncate">{props.item.label}</span>
+        {props.item.type === "slash-command" ? (
+          <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
+            {props.item.badge ?? props.item.action}
+          </Badge>
+        ) : null}
+        {props.item.type === "skill" ? (
+          <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+            skill
+          </Badge>
+        ) : null}
       </span>
-      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+      <span className="truncate text-muted-foreground/70 text-xs">
+        {props.item.type === "skill"
+          ? `${props.item.sourceLabel} · ${props.item.description}`
+          : props.item.description}
+      </span>
     </CommandItem>
+  );
+});
+
+function SlashCommandIcon(props: { command: string; icon?: PluginComposerIcon }) {
+  if (props.icon === "file-search" || props.command === "workspace") {
+    return <FileSearchIcon className="size-4 text-muted-foreground/80" />;
+  }
+  if (props.icon === "sparkles" || props.command === "skills" || props.command === "list-skills") {
+    return <SparklesIcon className="size-4 text-muted-foreground/80" />;
+  }
+  if (props.icon === "list" || props.command === "plan") {
+    return <ListTodoIcon className="size-4 text-muted-foreground/80" />;
+  }
+  if (props.icon === "terminal" || props.command === "default") {
+    return <TerminalIcon className="size-4 text-muted-foreground/80" />;
+  }
+  return <BotIcon className="size-4 text-muted-foreground/80" />;
+}
+
+const ComposerCommandPreview = memo(function ComposerCommandPreview(props: {
+  item: ComposerCommandItem | null;
+}) {
+  if (!props.item) {
+    return null;
+  }
+
+  const detail =
+    props.item.type === "skill"
+      ? `${props.item.sourceLabel} skill`
+      : props.item.type === "slash-command"
+        ? props.item.badge === "prompt"
+          ? "Inserts this custom prompt"
+          : props.item.action === "pick"
+            ? "Opens a second picker"
+            : props.item.action === "run"
+              ? "Runs immediately"
+              : "Inserts text into the prompt"
+        : props.item.type === "model"
+          ? "Switches this thread model"
+          : "Inserts a workspace path mention";
+
+  return (
+    <div className="border-t border-border/70 px-3 py-2 text-muted-foreground/75 text-xs">
+      <div className="truncate font-medium text-foreground/85">{props.item.label}</div>
+      <div className="truncate">{props.item.description}</div>
+      <div className="mt-1 truncate">{detail}</div>
+    </div>
   );
 });

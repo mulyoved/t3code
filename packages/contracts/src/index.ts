@@ -12,3 +12,6 @@ export * from "./orchestration";
 export * from "./editor";
 export * from "./project";
 export * from "./rpc";
+export * from "./skill";
+export * from "./prompt";
+export * from "./plugin";

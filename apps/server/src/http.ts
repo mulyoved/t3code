@@ -9,6 +9,7 @@ import {
 } from "./attachmentPaths";
 import { resolveAttachmentPathById } from "./attachmentStore";
 import { ServerConfig } from "./config";
+import { PluginManagerService } from "./plugins/service";
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver";
 
 const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
@@ -106,6 +107,46 @@ export const projectFaviconRouteLayer = HttpRouter.add(
         Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
       ),
     );
+  }),
+);
+
+export const pluginWebAssetsRouteLayer = HttpRouter.add(
+  "GET",
+  "/__plugins/*",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const match = /^\/__plugins\/([^/]+)\/web\.js$/.exec(url.value.pathname);
+    const pluginId = match?.[1] ? decodeURIComponent(match[1]) : null;
+    if (!pluginId) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    const pluginManager = yield* PluginManagerService;
+    const webEntry = pluginManager.getWebEntry(pluginId);
+    if (!webEntry) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const data = yield* fileSystem
+      .readFile(webEntry.filePath)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!data) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    return HttpServerResponse.uint8Array(data, {
+      status: 200,
+      contentType: "text/javascript; charset=utf-8",
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
   }),
 );
 

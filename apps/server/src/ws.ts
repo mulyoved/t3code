@@ -33,6 +33,9 @@ import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
 import { TerminalManager } from "./terminal/Services/Manager";
+import { PluginManagerService } from "./plugins/service";
+import { listAvailablePrompts } from "./prompts";
+import { listAvailableSkills } from "./skills";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
@@ -52,6 +55,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const lifecycleEvents = yield* ServerLifecycleEvents;
     const serverSettings = yield* ServerSettingsService;
     const startup = yield* ServerRuntimeStartup;
+    const pluginManager = yield* PluginManagerService;
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
 
@@ -220,6 +224,28 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             });
           }),
         ),
+      [WS_METHODS.pluginsGetBootstrap]: (_input) => Effect.succeed(pluginManager.getBootstrap()),
+      [WS_METHODS.pluginsCallProcedure]: (input) =>
+        Effect.tryPromise({
+          try: () => pluginManager.callProcedure(input.pluginId, input.procedure, input.payload),
+          catch: (cause) => ({
+            message: `Failed to call plugin procedure: ${String(cause)}`,
+          }),
+        }),
+      [WS_METHODS.skillsList]: (input) =>
+        Effect.tryPromise({
+          try: () => listAvailableSkills(input),
+          catch: (cause) => ({
+            message: `Failed to list skills: ${String(cause)}`,
+          }),
+        }).pipe(Effect.map((skills) => ({ skills }))),
+      [WS_METHODS.promptsList]: (input) =>
+        Effect.tryPromise({
+          try: () => listAvailablePrompts(input),
+          catch: (cause) => ({
+            message: `Failed to list prompts: ${String(cause)}`,
+          }),
+        }).pipe(Effect.map((prompts) => ({ prompts }))),
       [WS_METHODS.shellOpenInEditor]: (input) => open.openInEditor(input),
       [WS_METHODS.gitStatus]: (input) => gitManager.status(input),
       [WS_METHODS.gitPull]: (input) => git.pullCurrentBranch(input.cwd),
@@ -310,6 +336,17 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             );
             return Stream.concat(Stream.fromIterable(snapshotEvents), liveEvents);
           }),
+        ),
+      [WS_METHODS.subscribePluginsRegistryUpdates]: (_input) =>
+        Stream.callback((queue) =>
+          Effect.acquireRelease(
+            Effect.sync(() =>
+              pluginManager.subscribeToRegistryUpdates((ids) => {
+                void Queue.offer(queue, { ids });
+              }),
+            ),
+            (unsubscribe) => Effect.sync(unsubscribe),
+          ),
         ),
     });
   }),

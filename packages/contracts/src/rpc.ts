@@ -50,6 +50,13 @@ import {
   ProjectWriteFileResult,
 } from "./project";
 import {
+  PluginBootstrap,
+  PluginProcedureCallInput,
+  PluginRegistryUpdatedPayload,
+} from "./plugin";
+import { PromptsListInput, PromptsListResult } from "./prompt";
+import { SkillsListInput, SkillsListResult } from "./skill";
+import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalError,
@@ -77,6 +84,10 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  pluginsGetBootstrap: "plugins.getBootstrap",
+  pluginsCallProcedure: "plugins.callProcedure",
+  skillsList: "skills.list",
+  promptsList: "prompts.list",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -114,7 +125,12 @@ export const WS_METHODS = {
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  subscribePluginsRegistryUpdates: "subscribePluginsRegistryUpdates",
 } as const;
+
+const WsMessageError = Schema.Struct({
+  message: Schema.String,
+});
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -155,6 +171,30 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: ProjectWriteFileError,
+});
+
+export const WsPluginsGetBootstrapRpc = Rpc.make(WS_METHODS.pluginsGetBootstrap, {
+  payload: Schema.Struct({}),
+  success: PluginBootstrap,
+  error: WsMessageError,
+});
+
+export const WsPluginsCallProcedureRpc = Rpc.make(WS_METHODS.pluginsCallProcedure, {
+  payload: PluginProcedureCallInput,
+  success: Schema.Unknown,
+  error: WsMessageError,
+});
+
+export const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
+  payload: SkillsListInput,
+  success: SkillsListResult,
+  error: WsMessageError,
+});
+
+export const WsPromptsListRpc = Rpc.make(WS_METHODS.promptsList, {
+  payload: PromptsListInput,
+  success: PromptsListResult,
+  error: WsMessageError,
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -321,6 +361,15 @@ export const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServer
   stream: true,
 });
 
+export const WsSubscribePluginsRegistryUpdatesRpc = Rpc.make(
+  WS_METHODS.subscribePluginsRegistryUpdates,
+  {
+    payload: Schema.Struct({}),
+    success: PluginRegistryUpdatedPayload,
+    stream: true,
+  },
+);
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -329,6 +378,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsPluginsGetBootstrapRpc,
+  WsPluginsCallProcedureRpc,
+  WsSkillsListRpc,
+  WsPromptsListRpc,
   WsShellOpenInEditorRpc,
   WsGitStatusRpc,
   WsGitPullRpc,
@@ -351,6 +404,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeTerminalEventsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
+  WsSubscribePluginsRegistryUpdatesRpc,
   WsOrchestrationGetSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,

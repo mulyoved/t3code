@@ -18,7 +18,6 @@ export function createWsNativeApi(): NativeApi {
   }
 
   const rpcClient = getWsRpcClient();
-
   const api: NativeApi = {
     dialogs: {
       pickFolder: async () => {
@@ -44,6 +43,17 @@ export function createWsNativeApi(): NativeApi {
     projects: {
       searchEntries: rpcClient.projects.searchEntries,
       writeFile: rpcClient.projects.writeFile,
+    },
+    plugins: {
+      getBootstrap: rpcClient.plugins.getBootstrap,
+      callProcedure: rpcClient.plugins.callProcedure,
+      onRegistryUpdated: (callback) => rpcClient.plugins.subscribeRegistry(callback),
+    },
+    skills: {
+      list: rpcClient.skills.list,
+    },
+    prompts: {
+      list: rpcClient.prompts.list,
     },
     shell: {
       openInEditor: (cwd, editor) => rpcClient.shell.openInEditor({ cwd, editor }),

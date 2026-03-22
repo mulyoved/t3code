@@ -1,5 +1,6 @@
 import {
   ArchiveIcon,
+  ArrowLeftIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
   FolderIcon,
@@ -41,6 +42,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
+  type ResolvedKeybindingsConfig,
   ThreadId,
   type GitStatusResult,
 } from "@t3tools/contracts";
@@ -125,6 +127,9 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import type { Project, Thread } from "../types";
+import { PluginSlot } from "../plugins/host";
+
+const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -2149,6 +2154,7 @@ export default function Sidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
+            <PluginSlot slotId="sidebar.footer.before" />
           </SidebarFooter>
         </>
       )}

@@ -48,6 +48,7 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
+import { PluginManagerService, type PluginManagerShape } from "./plugins/service.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
@@ -131,6 +132,7 @@ const buildAppUnderTest = (options?: {
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    pluginManager?: Partial<PluginManagerShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -253,6 +255,18 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PluginManagerService)({
+          getBootstrap: () => ({ plugins: [] }),
+          callProcedure: async () => {
+            throw new Error("Plugin procedure not found");
+          },
+          getWebEntry: () => null,
+          subscribeToRegistryUpdates: () => () => undefined,
+          close: async () => undefined,
+          ...options?.layers?.pluginManager,
         }),
       ),
       Layer.provide(workspaceAndProjectServicesLayer),
@@ -759,6 +773,127 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         result.failure.message,
         "Workspace file path must stay within the project root.",
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc plugins.getBootstrap and serves plugin web entries", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-plugins-" });
+      const pluginDir = path.join(workspaceDir, "plugins", "sample-plugin");
+
+      yield* fs.makeDirectory(pluginDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(pluginDir, "t3-plugin.json"),
+        JSON.stringify({
+          id: "sample-plugin",
+          name: "Sample Plugin",
+          version: "0.0.1",
+          hostApiVersion: "1",
+          webEntry: "web.js",
+        }),
+      );
+      yield* fs.writeFileString(path.join(pluginDir, "web.js"), "export const samplePlugin = true;");
+
+      yield* buildAppUnderTest({
+        config: {
+          cwd: workspaceDir,
+        },
+        layers: {
+          pluginManager: {
+            getBootstrap: () => ({
+              plugins: [
+                {
+                  id: "sample-plugin",
+                  name: "Sample Plugin",
+                  version: "0.0.1",
+                  hostApiVersion: "1",
+                  enabled: true,
+                  compatible: true,
+                  hasServer: false,
+                  hasWeb: true,
+                  webUrl: "/__plugins/sample-plugin/web.js?v=0.0.1",
+                },
+              ],
+            }),
+            getWebEntry: (pluginId) =>
+              pluginId === "sample-plugin"
+                ? {
+                    filePath: path.join(pluginDir, "web.js"),
+                    version: "0.0.1",
+                  }
+                : null,
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const bootstrap = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.pluginsGetBootstrap]({})),
+      );
+
+      assert.equal(bootstrap.plugins.length, 1);
+      const plugin = bootstrap.plugins[0];
+      assert.equal(plugin?.id, "sample-plugin");
+      assert.isNotNull(plugin?.webUrl);
+
+      const response = yield* HttpClient.get("/__plugins/sample-plugin/web.js");
+      assert.equal(response.status, 200);
+      assert.equal(yield* response.text, "export const samplePlugin = true;");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc skills.list and prompts.list", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-skill-prompt-" });
+      const skillDir = path.join(workspaceDir, ".agents", "skills", "sample-skill");
+      const promptsDir = path.join(workspaceDir, ".codex", "prompts");
+
+      yield* fs.makeDirectory(skillDir, { recursive: true });
+      yield* fs.makeDirectory(promptsDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(skillDir, "SKILL.md"),
+        `---
+name: sample-skill
+description: Use when sample behavior is needed
+---
+
+# Sample Skill
+`,
+      );
+      yield* fs.writeFileString(
+        path.join(promptsDir, "sample-prompt.md"),
+        `---
+description: Use the sample prompt.
+argument-hint: optional text
+---
+
+# Sample Prompt
+`,
+      );
+
+      yield* buildAppUnderTest({
+        config: {
+          cwd: workspaceDir,
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const skills = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.skillsList]({ cwd: workspaceDir })),
+      );
+      const prompts = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.promptsList]({ cwd: workspaceDir })),
+      );
+
+      assert.equal(skills.skills.length, 1);
+      assert.equal(skills.skills[0]?.name, "sample-skill");
+      assert.equal(prompts.prompts.length, 1);
+      assert.equal(prompts.prompts[0]?.name, "sample-prompt");
+      assert.equal(prompts.prompts[0]?.argumentHint, "optional text");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

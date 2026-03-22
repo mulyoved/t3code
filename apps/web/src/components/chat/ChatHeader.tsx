@@ -5,6 +5,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { memo } from "react";
+import { PluginSlot } from "../../plugins/host";
 import GitActionsControl from "../GitActionsControl";
 import { DiffIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
@@ -102,6 +103,14 @@ export const ChatHeader = memo(function ChatHeader({
           />
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        <PluginSlot
+          slotId="chat.header.actions.after"
+          renderProps={{
+            threadId: activeThreadId,
+            projectName: activeProjectName ?? null,
+            cwd: openInCwd,
+          }}
+        />
         <Tooltip>
           <TooltipTrigger
             render={
