@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
 
+import { ExtensionHostProvider } from "./extensions/host";
 import { routeTree } from "./routeTree.gen";
 import { StoreProvider } from "./store";
 
@@ -20,7 +21,11 @@ export function getRouter(history: RouterHistory) {
       createElement(
         QueryClientProvider,
         { client: queryClient },
-        createElement(StoreProvider, null, children),
+        createElement(
+          ExtensionHostProvider,
+          { queryClient },
+          createElement(StoreProvider, null, children),
+        ),
       ),
   });
 }

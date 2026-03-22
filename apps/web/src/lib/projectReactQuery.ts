@@ -21,6 +21,7 @@ export function projectSearchEntriesQueryOptions(input: {
   enabled?: boolean;
   limit?: number;
   staleTime?: number;
+  allowEmptyQuery?: boolean;
 }) {
   const limit = input.limit ?? DEFAULT_SEARCH_ENTRIES_LIMIT;
   return queryOptions({
@@ -36,7 +37,10 @@ export function projectSearchEntriesQueryOptions(input: {
         limit,
       });
     },
-    enabled: (input.enabled ?? true) && input.cwd !== null && input.query.length > 0,
+    enabled:
+      (input.enabled ?? true) &&
+      input.cwd !== null &&
+      (input.allowEmptyQuery === true || input.query.length > 0),
     staleTime: input.staleTime ?? DEFAULT_SEARCH_ENTRIES_STALE_TIME,
     placeholderData: (previous) => previous ?? EMPTY_SEARCH_ENTRIES_RESULT,
   });

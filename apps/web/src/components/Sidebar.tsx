@@ -91,6 +91,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { ExtensionSlot } from "../extensions/host";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -1678,6 +1679,7 @@ export default function Sidebar() {
 
       <SidebarSeparator />
       <SidebarFooter className="p-2">
+        <ExtensionSlot slotId="sidebar.footer.before" />
         <SidebarMenu>
           <SidebarMenuItem>
             {isOnSettings ? (

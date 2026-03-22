@@ -84,6 +84,8 @@ import {
   type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath } from "../vscode-icons";
+import type { ExtensionComposerItem } from "../extensions/composer";
+import { ExtensionSlot, useExtensionComposerItems } from "../extensions/host";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
@@ -204,6 +206,71 @@ const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
+function normalizeComposerSearchValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function scoreSlashCommandMatch(
+  item: Extract<ComposerCommandItem, { type: "slash-command" }>,
+  rawQuery: string,
+): number | null {
+  const query = normalizeComposerSearchValue(rawQuery);
+  if (!query) {
+    return item.action === "pick" ? 0 : item.action === "run" ? 1 : 2;
+  }
+
+  const command = item.command.toLowerCase();
+  const label = item.label.toLowerCase();
+  const description = item.description.toLowerCase();
+  const keywords = item.keywords?.map((keyword) => keyword.toLowerCase()) ?? [];
+
+  if (command === query) return 0;
+  if (command.startsWith(query)) return 1;
+  if (label.startsWith(query)) return 2;
+  if (keywords.some((keyword) => keyword.startsWith(query))) return 3;
+  if (label.includes(query)) return 4;
+  if (keywords.some((keyword) => keyword.includes(query))) return 5;
+  if (description.includes(query)) return 6;
+  return null;
+}
+
+function mapExtensionComposerItem(item: ExtensionComposerItem): ComposerCommandItem {
+  if (item.type === "path") {
+    return {
+      id: item.id,
+      type: "path",
+      path: item.path,
+      pathKind: item.pathKind,
+      label: item.label,
+      description: item.description,
+    };
+  }
+
+  if (item.type === "skill") {
+    return {
+      id: item.id,
+      type: "skill",
+      label: item.label,
+      description: item.description,
+      sourceLabel: item.sourceLabel,
+      replacementText: item.replacementText,
+    };
+  }
+
+  return {
+    id: item.id,
+    type: "slash-command",
+    command: item.id,
+    action: item.action,
+    label: item.label,
+    description: item.description,
+    keywords: item.keywords ? [...item.keywords] : undefined,
+    icon: item.icon,
+    badge: item.badge,
+    onSelect: item.onSelect,
+  };
+}
+
 const extendReplacementRangeForTrailingSpace = (
   text: string,
   rangeEnd: number,
@@ -234,6 +301,11 @@ const terminalContextIdListsEqual = (
 
 interface ChatViewProps {
   threadId: ThreadId;
+}
+
+interface SecondaryComposerMenuState {
+  readonly title: string;
+  readonly items: readonly ComposerCommandItem[];
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
@@ -344,6 +416,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const [secondaryComposerMenu, setSecondaryComposerMenu] =
+    useState<SecondaryComposerMenuState | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -1024,7 +1098,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const extensionComposerItems = useExtensionComposerItems({
+    triggerKind:
+      composerTriggerKind === "slash-command" ||
+      composerTriggerKind === "slash-workspace" ||
+      composerTriggerKind === "slash-skills" ||
+      composerTriggerKind === "skill-mention"
+        ? composerTriggerKind
+        : null,
+    query:
+      composerTriggerKind === "path" || composerTriggerKind === "slash-model"
+        ? ""
+        : (composerTrigger?.query ?? ""),
+    threadId,
+    cwd: gitCwd,
+  });
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
+    if (secondaryComposerMenu) {
+      return [...secondaryComposerMenu.items];
+    }
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return workspaceEntries.map((entry) => ({
@@ -1037,37 +1129,56 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }));
     }
 
+    if (
+      composerTrigger.kind === "skill-mention" ||
+      composerTrigger.kind === "slash-skills" ||
+      composerTrigger.kind === "slash-workspace"
+    ) {
+      return extensionComposerItems.items.map(mapExtensionComposerItem);
+    }
+
     if (composerTrigger.kind === "slash-command") {
       const slashCommandItems = [
         {
           id: "slash:model",
           type: "slash-command",
           command: "model",
-          label: "/model",
-          description: "Switch response model for this thread",
+          action: "insert",
+          label: "Switch model",
+          description: "Insert /model to choose a different thread model",
+          keywords: ["model", "switch", "provider"],
         },
         {
           id: "slash:plan",
           type: "slash-command",
           command: "plan",
-          label: "/plan",
+          action: "run",
+          label: "Insert plan request",
           description: "Switch this thread into plan mode",
+          keywords: ["plan", "mode"],
         },
         {
           id: "slash:default",
           type: "slash-command",
           command: "default",
-          label: "/default",
+          action: "run",
+          label: "Return to default mode",
           description: "Switch this thread back to normal chat mode",
+          keywords: ["default", "chat", "mode"],
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const query = composerTrigger.query.trim().toLowerCase();
-      if (!query) {
-        return [...slashCommandItems];
-      }
-      return slashCommandItems.filter(
-        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
+      const builtInItems = [...slashCommandItems]
+        .filter((item) => scoreSlashCommandMatch(item, composerTrigger.query) !== null)
+        .toSorted(
+          (left, right) =>
+            (scoreSlashCommandMatch(left, composerTrigger.query) ?? Number.MAX_SAFE_INTEGER) -
+              (scoreSlashCommandMatch(right, composerTrigger.query) ?? Number.MAX_SAFE_INTEGER) ||
+            left.label.localeCompare(right.label),
+        );
+      const extensionItems = extensionComposerItems.items.flatMap((item) =>
+        item.type === "slash-command" ? [mapExtensionComposerItem(item)] : [],
       );
+      return [...builtInItems, ...extensionItems];
     }
 
     return searchableModelOptions
@@ -1086,8 +1197,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
-  const composerMenuOpen = Boolean(composerTrigger);
+  }, [
+    composerTrigger,
+    extensionComposerItems.items,
+    searchableModelOptions,
+    secondaryComposerMenu,
+    workspaceEntries,
+  ]);
+  const composerMenuOpen = Boolean(composerTrigger || secondaryComposerMenu);
   const activeComposerMenuItem = useMemo(
     () =>
       composerMenuItems.find((item) => item.id === composerHighlightedItemId) ??
@@ -1833,6 +1950,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     setExpandedWorkGroups({});
     setPullRequestDialogState(null);
+    setSecondaryComposerMenu(null);
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
       setPlanSidebarOpen(true);
@@ -3235,6 +3353,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
       if (item.type === "path") {
+        setSecondaryComposerMenu(null);
         const replacement = `@${item.path} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
@@ -3252,8 +3371,65 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      if (item.type === "skill") {
+        setSecondaryComposerMenu(null);
+        const replacement = item.replacementText;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
       if (item.type === "slash-command") {
+        if (item.onSelect) {
+          setComposerHighlightedItemId(null);
+          void Promise.resolve(item.onSelect())
+            .then(async (result) => {
+              if (!result || result.type === "none") {
+                return;
+              }
+              if (result.type === "open-secondary") {
+                setSecondaryComposerMenu({
+                  title: result.title,
+                  items: (await Promise.resolve(result.items)).map(mapExtensionComposerItem),
+                });
+                return;
+              }
+              setSecondaryComposerMenu(null);
+              if (result.type === "replace-trigger") {
+                const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+                  snapshot.value,
+                  trigger.rangeEnd,
+                  result.text,
+                );
+                applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, result.text, {
+                  expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+                });
+                return;
+              }
+              applyPromptReplacement(snapshot.expandedCursor, snapshot.expandedCursor, result.text);
+            })
+            .catch((error) => {
+              toastManager.add({
+                type: "error",
+                title: "Extension command failed",
+                description: error instanceof Error ? error.message : "Unknown error",
+              });
+            });
+          return;
+        }
         if (item.command === "model") {
+          setSecondaryComposerMenu(null);
           const replacement = "/model ";
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
             snapshot.value,
@@ -3271,7 +3447,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           return;
         }
-        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        if (item.action === "insert") {
+          setSecondaryComposerMenu(null);
+          const replacement = `/${item.command} `;
+          const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+            snapshot.value,
+            trigger.rangeEnd,
+            replacement,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            replacementRangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        setSecondaryComposerMenu(null);
+        const nextInteractionMode = item.command === "plan" ? "plan" : "default";
+        void handleInteractionModeChange(nextInteractionMode);
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
@@ -3280,6 +3477,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      setSecondaryComposerMenu(null);
       onProviderModelSelect(item.provider, item.model);
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
         expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -3293,6 +3491,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       handleInteractionModeChange,
       onProviderModelSelect,
       resolveActiveComposerTrigger,
+      setSecondaryComposerMenu,
     ],
   );
   const onComposerMenuItemHighlighted = useCallback((itemId: string | null) => {
@@ -3317,11 +3516,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [composerHighlightedItemId, composerMenuItems],
   );
   const isComposerMenuLoading =
-    composerTriggerKind === "path" &&
-    ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
-      workspaceEntriesQuery.isLoading ||
-      workspaceEntriesQuery.isFetching);
-
+    (composerTriggerKind === "path" &&
+      pathTriggerQuery.length > 0 &&
+      composerPathQueryDebouncer.state.isPending) ||
+    (composerTriggerKind === "path" &&
+      (workspaceEntriesQuery.isLoading || workspaceEntriesQuery.isFetching)) ||
+    extensionComposerItems.isLoading;
   const onPromptChange = useCallback(
     (
       nextPrompt: string,
@@ -3342,6 +3542,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
+      setSecondaryComposerMenu(null);
       if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
         setComposerDraftTerminalContexts(
           threadId,
@@ -3731,7 +3932,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               ? "Add feedback to refine the plan, or leave this blank to implement it"
                               : phase === "disconnected"
                                 ? "Ask for follow-up changes or attach images"
-                                : "Ask anything, @tag files/folders, or use / to show available commands"
+                                : "Ask anything, @tag files/folders, use / for commands, or $ for skills"
                       }
                       disabled={isConnecting || isComposerApprovalState}
                     />
@@ -4103,6 +4304,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
             }}
           />
         ) : null}
+        <ExtensionSlot
+          slotId="thread.rightPanel.tabs"
+          renderProps={{
+            threadId: activeThread.id,
+            cwd: gitCwd,
+            projectId: activeProject?.id ?? null,
+          }}
+        />
       </div>
       {/* end horizontal flex container */}
 

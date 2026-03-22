@@ -8,12 +8,29 @@ import pkg from "./package.json" with { type: "json" };
 const port = Number(process.env.PORT ?? 5733);
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
+function resolveExtensionProxyTarget(wsUrl: string | undefined): string | undefined {
+  const trimmedUrl = wsUrl?.trim();
+  if (!trimmedUrl) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(trimmedUrl);
+    const protocol = parsed.protocol === "wss:" ? "https:" : "http:";
+    return `${protocol}//${parsed.host}`;
+  } catch {
+    return undefined;
+  }
+}
+
 const buildSourcemap =
   sourcemapEnv === "0" || sourcemapEnv === "false"
     ? false
     : sourcemapEnv === "hidden"
       ? "hidden"
       : true;
+
+const extensionProxyTarget = resolveExtensionProxyTarget(process.env.VITE_WS_URL);
 
 export default defineConfig({
   plugins: [
@@ -50,6 +67,16 @@ export default defineConfig({
       protocol: "ws",
       host: "localhost",
     },
+    ...(extensionProxyTarget
+      ? {
+          proxy: {
+            "/__extensions": {
+              target: extensionProxyTarget,
+              changeOrigin: true,
+            },
+          },
+        }
+      : {}),
   },
   build: {
     outDir: "dist",

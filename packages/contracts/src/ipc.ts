@@ -24,6 +24,11 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import type {
+  ExtensionCallInput,
+  ExtensionListResult,
+  ExtensionsUpdatedPayload,
+} from "./extension";
 import type { ServerConfig } from "./server";
 import type {
   TerminalClearInput,
@@ -128,6 +133,11 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  extensions: {
+    list: () => Promise<ExtensionListResult>;
+    call: (input: ExtensionCallInput) => Promise<unknown>;
+    onUpdated: (callback: (payload: ExtensionsUpdatedPayload) => void) => () => void;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

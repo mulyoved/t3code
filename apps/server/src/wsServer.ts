@@ -78,6 +78,7 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { createExtensionManager } from "./extensions/manager.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -257,6 +258,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const extensionManager = yield* Effect.tryPromise({
+    try: () => createExtensionManager({ cwd }),
+    catch: (cause) => new ServerLifecycleError({ operation: "createExtensionManager", cause }),
+  });
+  yield* Effect.addFinalizer(() =>
+    Effect.tryPromise({
+      try: () => extensionManager.close(),
+      catch: (cause) => new ServerLifecycleError({ operation: "closeExtensionManager", cause }),
+    }).pipe(Effect.ignoreCause({ log: false }), Effect.asVoid),
+  );
 
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
@@ -289,6 +300,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     logOutgoingPush,
   });
   yield* readiness.markPushBusReady;
+  const unsubscribeExtensionUpdates = extensionManager.subscribeToUpdates((ids) => {
+    void Effect.runPromise(
+      pushBus.publishAll(WS_CHANNELS.extensionsUpdated, {
+        ids,
+      }),
+    );
+  });
+  yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeExtensionUpdates()));
   yield* keybindingsManager.start.pipe(
     Effect.mapError(
       (cause) => new ServerLifecycleError({ operation: "keybindingsRuntimeStart", cause }),
@@ -485,6 +504,36 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           if (!res.writableEnded) {
             res.end();
           }
+          return;
+        }
+
+        if (url.pathname.startsWith("/__extensions/")) {
+          const match = /^\/__extensions\/([^/]+)\/web\.js$/.exec(url.pathname);
+          const extensionId = match?.[1] ? decodeURIComponent(match[1]) : null;
+          if (!extensionId) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+          const webEntry = extensionManager.getWebEntry(extensionId);
+          if (!webEntry) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+          const data = yield* fileSystem
+            .readFile(webEntry.filePath)
+            .pipe(Effect.catch(() => Effect.succeed(null)));
+          if (!data) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+          respond(
+            200,
+            {
+              "Content-Type": "text/javascript; charset=utf-8",
+              "Cache-Control": "no-store",
+            },
+            data,
+          );
           return;
         }
 
@@ -774,6 +823,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         );
         return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.extensionsList: {
+        return {
+          extensions: extensionManager.listClientExtensions(),
+        };
+      }
+
+      case WS_METHODS.extensionsCall: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => extensionManager.call(body.extensionId, body.method, body.args),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to call extension method: ${String(cause)}`,
+            }),
+        });
       }
 
       case WS_METHODS.shellOpenInEditor: {
