@@ -4,6 +4,7 @@ import type {
   ProviderKind,
   ModelSlug,
   PluginComposerItem,
+  SkillSummary,
 } from "@t3tools/contracts";
 
 import type { ComposerTriggerKind } from "~/composer-logic";
@@ -90,6 +91,64 @@ export function mapPluginComposerItem(item: PluginComposerItem): ComposerCommand
   };
 }
 
+function normalizeSkillSearchValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function scoreSkillMatch(
+  skill: Pick<SkillSummary, "name" | "displayName" | "description">,
+  rawQuery: string,
+): number | null {
+  const query = normalizeSkillSearchValue(rawQuery);
+  if (!query) {
+    return 0;
+  }
+
+  const name = skill.name.toLowerCase();
+  const displayName = skill.displayName.toLowerCase();
+  const description = skill.description.toLowerCase();
+
+  if (name === query) return 0;
+  if (displayName === query) return 1;
+  if (name.startsWith(query)) return 2;
+  if (displayName.startsWith(query)) return 3;
+  if (name.includes(query)) return 4;
+  if (displayName.includes(query)) return 5;
+  if (description.includes(query)) return 6;
+  return null;
+}
+
+function sourceRank(sourceKind: SkillSummary["sourceKind"]): number {
+  return sourceKind === "project" ? 0 : sourceKind === "user" ? 1 : 2;
+}
+
+function buildSkillSourceLabel(sourceKind: SkillSummary["sourceKind"]): string {
+  return sourceKind === "project" ? "Project" : sourceKind === "user" ? "User" : "System";
+}
+
+export function buildSkillComposerItems(input: {
+  skills: readonly SkillSummary[];
+  query: string;
+}): ComposerCommandItem[] {
+  return input.skills
+    .filter((skill) => scoreSkillMatch(skill, input.query) !== null)
+    .toSorted(
+      (left, right) =>
+        (scoreSkillMatch(left, input.query) ?? Number.MAX_SAFE_INTEGER) -
+          (scoreSkillMatch(right, input.query) ?? Number.MAX_SAFE_INTEGER) ||
+        sourceRank(left.sourceKind) - sourceRank(right.sourceKind) ||
+        left.name.localeCompare(right.name),
+    )
+    .map((skill) => ({
+      id: `builtin-skill:${skill.id}`,
+      type: "skill",
+      label: skill.displayName,
+      description: skill.description,
+      sourceLabel: buildSkillSourceLabel(skill.sourceKind),
+      replacementText: skill.defaultPrompt,
+    }));
+}
+
 export function buildComposerMenuItems(input: {
   composerTrigger: {
     kind: ComposerTriggerKind;
@@ -99,6 +158,7 @@ export function buildComposerMenuItems(input: {
   workspaceEntries: readonly ProjectEntry[];
   availablePrompts: readonly PromptSummary[];
   pluginComposerItems: readonly PluginComposerItem[];
+  availableSkills: readonly SkillSummary[];
   searchableModelOptions: readonly SearchableModelOption[];
 }): ComposerCommandItem[] {
   if (input.secondaryComposerMenu) {
@@ -124,7 +184,33 @@ export function buildComposerMenuItems(input: {
     input.composerTrigger.kind === "slash-skills" ||
     input.composerTrigger.kind === "slash-workspace"
   ) {
-    return input.pluginComposerItems.map(mapPluginComposerItem);
+    const pluginItems = input.pluginComposerItems.map(mapPluginComposerItem);
+    if (
+      input.composerTrigger.kind === "skill-mention" ||
+      input.composerTrigger.kind === "slash-skills"
+    ) {
+      const builtinSkillItems = buildSkillComposerItems({
+        skills: input.availableSkills,
+        query: input.composerTrigger.query,
+      });
+      const pluginSkillKeys = new Set(
+        pluginItems
+          .filter(
+            (item): item is Extract<ComposerCommandItem, { type: "skill" }> =>
+              item.type === "skill",
+          )
+          .map((item) => `${item.replacementText}\n${item.label}\n${item.sourceLabel}`),
+      );
+      return [
+        ...pluginItems,
+        ...builtinSkillItems.filter(
+          (item) =>
+            item.type !== "skill" ||
+            !pluginSkillKeys.has(`${item.replacementText}\n${item.label}\n${item.sourceLabel}`),
+        ),
+      ];
+    }
+    return pluginItems;
   }
 
   if (input.composerTrigger.kind === "slash-command") {
