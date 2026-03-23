@@ -14,6 +14,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
   type ServerProviderStatus,
+  type SkillSummary,
   type ThreadId,
   type TurnId,
   type EditorId,
@@ -36,6 +37,7 @@ import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib
 import { promptsListQueryOptions } from "~/lib/promptReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import { skillsListQueryOptions } from "~/lib/skillReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
@@ -196,6 +198,7 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_AVAILABLE_PROMPTS: PromptSummary[] = [];
+const EMPTY_AVAILABLE_SKILLS: SkillSummary[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
 function formatOutgoingPrompt(params: {
@@ -1034,8 +1037,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
   );
   const promptsQuery = useQuery(promptsListQueryOptions({ cwd: gitCwd }));
+  const skillsQuery = useQuery(
+    skillsListQueryOptions({
+      cwd: gitCwd,
+      enabled: composerTriggerKind === "skill-mention" || composerTriggerKind === "slash-skills",
+    }),
+  );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const availablePrompts = promptsQuery.data?.prompts ?? EMPTY_AVAILABLE_PROMPTS;
+  const availableSkills = skillsQuery.data?.skills ?? EMPTY_AVAILABLE_SKILLS;
   const pluginComposerItems = usePluginComposerItems({
     triggerKind:
       composerTriggerKind === "slash-command" ||
@@ -1058,10 +1068,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       workspaceEntries,
       availablePrompts,
       pluginComposerItems: pluginComposerItems.items,
+      availableSkills,
       searchableModelOptions,
     });
   }, [
     composerTrigger,
+    availableSkills,
     availablePrompts,
     pluginComposerItems.items,
     searchableModelOptions,
@@ -3371,6 +3383,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (composerTriggerKind === "path" &&
       (workspaceEntriesQuery.isLoading || workspaceEntriesQuery.isFetching)) ||
     pluginComposerItems.isLoading ||
+    ((composerTriggerKind === "skill-mention" || composerTriggerKind === "slash-skills") &&
+      (skillsQuery.isLoading || skillsQuery.isFetching)) ||
     isComposerPromptLoading;
   const onPromptChange = useCallback(
     (
