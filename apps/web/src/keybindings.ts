@@ -9,6 +9,7 @@ import { isMacPlatform } from "./lib/utils";
 export interface ShortcutEventLike {
   type?: string;
   key: string;
+  code?: string;
   metaKey: boolean;
   ctrlKey: boolean;
   shiftKey: boolean;
@@ -37,12 +38,59 @@ function normalizeEventKey(key: string): string {
   return normalized;
 }
 
+function normalizeEventCode(code: string | undefined): string | null {
+  if (!code) return null;
+  if (code.startsWith("Key") && code.length === 4) {
+    return code.slice(3).toLowerCase();
+  }
+  if (code.startsWith("Digit") && code.length === 6) {
+    return code.slice(5);
+  }
+  switch (code) {
+    case "Backquote":
+      return "`";
+    case "Minus":
+      return "-";
+    case "Equal":
+      return "=";
+    case "Backslash":
+      return "\\";
+    case "BracketLeft":
+      return "[";
+    case "BracketRight":
+      return "]";
+    case "Semicolon":
+      return ";";
+    case "Quote":
+      return "'";
+    case "Comma":
+      return ",";
+    case "Period":
+      return ".";
+    case "Slash":
+      return "/";
+    case "Space":
+      return " ";
+    default:
+      return null;
+  }
+}
+
+function resolveEventShortcutKey(event: ShortcutEventLike): string {
+  const normalizedKey = normalizeEventKey(event.key);
+  if (!event.altKey) {
+    return normalizedKey;
+  }
+  const normalizedCode = normalizeEventCode(event.code);
+  return normalizedCode ?? normalizedKey;
+}
+
 function matchesShortcut(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): boolean {
-  const key = normalizeEventKey(event.key);
+  const key = resolveEventShortcutKey(event);
   if (key !== shortcut.key) return false;
 
   const useMetaForMod = isMacPlatform(platform);

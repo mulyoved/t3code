@@ -243,6 +243,23 @@ const terminalContextIdListsEqual = (
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
+function difitFailureToast(reason: string): string {
+  switch (reason) {
+    case "no_active_worktree":
+      return "No active worktree is available for this thread.";
+    case "thread_not_found":
+      return "Fullscreen diff is only available for saved threads.";
+    case "spawn_failed":
+      return "Failed to start difit.";
+    case "startup_timeout":
+      return "Timed out while starting difit.";
+    case "process_exited":
+      return "Difit exited before it was ready.";
+    default:
+      return "Failed to open fullscreen diff.";
+  }
+}
+
 interface ChatViewProps {
   threadId: ThreadId;
 }
@@ -1142,6 +1159,43 @@ export default function ChatView({ threadId }: ChatViewProps) {
       },
     });
   }, [diffOpen, navigate, threadId]);
+  const onToggleDifit = useCallback(() => {
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+    if (!isServerThread) {
+      toastManager.add({
+        type: "error",
+        title: "Fullscreen diff is only available for saved threads.",
+      });
+      return;
+    }
+    void api.difit
+      .open({ threadId })
+      .then((result) => {
+        if (!result.ok) {
+          toastManager.add({
+            type: "error",
+            title: difitFailureToast(result.reason),
+          });
+          return;
+        }
+        void navigate({
+          to: "/difit/$threadId",
+          params: { threadId },
+          search: {
+            sessionRevision: result.sessionRevision,
+          },
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: error instanceof Error ? error.message : "Failed to open fullscreen diff.",
+        });
+      });
+  }, [isServerThread, navigate, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -2159,6 +2213,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "difit.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggleDifit();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2181,6 +2242,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     splitTerminal,
     keybindings,
     onToggleDiff,
+    onToggleDifit,
     toggleTerminalVisibility,
   ]);
 

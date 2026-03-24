@@ -40,6 +40,7 @@ import { PluginProcedureCallInput, PluginRegistryUpdatedPayload } from "./plugin
 import { ServerConfigUpdatedPayload } from "./server";
 import { SkillsListInput } from "./skill";
 import { PromptsListInput } from "./prompt";
+import { DifitOpenInput } from "./difit";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
@@ -82,6 +83,7 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+  difitOpen: "difit.open",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -151,6 +153,7 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+  tagRequestBody(WS_METHODS.difitOpen, DifitOpenInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({
