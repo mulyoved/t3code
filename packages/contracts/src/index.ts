@@ -14,3 +14,4 @@ export * from "./project";
 export * from "./skill";
 export * from "./prompt";
 export * from "./plugin";
+export * from "./difit";

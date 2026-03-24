@@ -13,6 +13,7 @@ import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  type DifitOpenResult,
   type ClientOrchestrationCommand,
   type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
@@ -27,6 +28,7 @@ import {
   WsResponse,
   type WsPushEnvelopeBase,
 } from "@t3tools/contracts";
+import { NetService } from "@t3tools/shared/Net";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   Cause,
@@ -81,6 +83,7 @@ import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson"
 import { listAvailableSkills } from "./skills.ts";
 import { listAvailablePrompts } from "./prompts.ts";
 import { createPluginManager } from "./plugins/manager.ts";
+import { createDifitManager } from "./difitManager.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -220,7 +223,8 @@ export type ServerRuntimeServices =
   | TerminalManager
   | Keybindings
   | Open
-  | AnalyticsService;
+  | AnalyticsService
+  | NetService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -285,7 +289,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
+  const difitLogger = createLogger("difit");
   const readiness = yield* makeServerReadiness;
+  const { reserveLoopbackPort } = yield* NetService;
 
   function logOutgoingPush(push: WsPushEnvelopeBase, recipients: number) {
     if (!logWebSocketEvents) return;
@@ -446,6 +452,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
         if (tryHandleProjectFaviconRequest(url, res)) {
+          return;
+        }
+        if (
+          yield* Effect.tryPromise(() =>
+            difitManager.handleProxyRequest({ request: req, response: res, url }),
+          )
+        ) {
           return;
         }
 
@@ -739,6 +752,19 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
   >();
   const runPromise = Effect.runPromiseWith(runtimeServices);
+  const difitManager = createDifitManager({
+    getSnapshot: () => runPromise(projectionReadModelQuery.getSnapshot()),
+    reserveLoopbackPort: () => runPromise(reserveLoopbackPort()),
+    logger: (message, context) => {
+      difitLogger.event(message, context ?? {});
+    },
+  });
+  yield* Effect.addFinalizer(() =>
+    Effect.tryPromise({
+      try: () => difitManager.close(),
+      catch: (cause) => new ServerLifecycleError({ operation: "closeDifitManager", cause }),
+    }).pipe(Effect.ignoreCause({ log: false }), Effect.asVoid),
+  );
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
     (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
@@ -973,6 +999,17 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.difitOpen: {
+        const body = stripRequestTag(request.body);
+        return (yield* Effect.tryPromise({
+          try: () => difitManager.open(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to open difit: ${String(cause)}`,
+            }),
+        })) satisfies DifitOpenResult;
       }
 
       default: {

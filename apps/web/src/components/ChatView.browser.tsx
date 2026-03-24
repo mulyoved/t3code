@@ -3,15 +3,16 @@ import "../index.css";
 
 import {
   ORCHESTRATION_WS_METHODS,
+  OrchestrationSessionStatus,
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
+  type ResolvedKeybindingRule,
   type ServerConfig,
   type ThreadId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
-  OrchestrationSessionStatus,
 } from "@t3tools/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
@@ -116,6 +117,10 @@ function createBaseServerConfig(): ServerConfig {
     ],
     availableEditors: [],
   };
+}
+
+function resolvedBinding(binding: ResolvedKeybindingRule): ResolvedKeybindingRule {
+  return binding;
 }
 
 function createUserMessage(options: {
@@ -389,6 +394,11 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   if (tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
   }
+  if (tag === WS_METHODS.pluginsGetBootstrap) {
+    return {
+      plugins: [],
+    };
+  }
   if (tag === WS_METHODS.gitListBranches) {
     return {
       isRepo: true,
@@ -437,6 +447,14 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
       updatedAt: NOW_ISO,
     };
   }
+  if (tag === WS_METHODS.difitOpen) {
+    return {
+      ok: true,
+      cwd: "/repo/project",
+      proxyPath: "/__difit/browser-revision/",
+      sessionRevision: "browser-revision",
+    };
+  }
   return {};
 }
 
@@ -478,6 +496,9 @@ const worker = setupWorker(
     }),
   ),
   http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
+  http.get(/.*\/__difit\/.*/, () =>
+    HttpResponse.html("<!doctype html><html><body>difit test</body></html>"),
+  ),
 );
 
 async function nextFrame(): Promise<void> {
@@ -1040,6 +1061,82 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens fullscreen difit with Alt+G using the browser keyboard chord", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-difit-hotkey" as MessageId,
+        targetText: "difit hotkey target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            resolvedBinding({
+              command: "difit.toggle",
+              shortcut: {
+                key: "g",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: true,
+                modKey: false,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            }),
+          ],
+        };
+      },
+    });
+
+    try {
+      const capturedEvents: Array<{ key: string; code: string; altKey: boolean }> = [];
+      const capture = (event: KeyboardEvent) => {
+        capturedEvents.push({
+          key: event.key,
+          code: event.code,
+          altKey: event.altKey,
+        });
+      };
+      window.addEventListener("keydown", capture);
+
+      await page.getByTestId("composer-editor").click();
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "©",
+          code: "KeyG",
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const difitRequest = wsRequests.find((request) => request._tag === WS_METHODS.difitOpen);
+          expect(difitRequest).toMatchObject({
+            _tag: WS_METHODS.difitOpen,
+            threadId: THREAD_ID,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      await waitForURL(
+        mounted.router,
+        (pathname) => pathname === `/difit/${THREAD_ID}`,
+        "Expected Alt+G to navigate to the fullscreen difit route.",
+      );
+      expect(capturedEvents.some((event) => event.code === "KeyG" && event.altKey)).toBe(true);
+
+      window.removeEventListener("keydown", capture);
     } finally {
       await mounted.cleanup();
     }

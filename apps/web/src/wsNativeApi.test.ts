@@ -336,6 +336,19 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards difit open requests to websocket methods", async () => {
+    requestMock.mockResolvedValue({ ok: true });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.difit.open({ threadId: ThreadId.makeUnsafe("thread-1") });
+
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.difitOpen, {
+      threadId: "thread-1",
+    });
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {
