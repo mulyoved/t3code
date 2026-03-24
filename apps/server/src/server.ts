@@ -1,13 +1,16 @@
 import { Effect, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import { NetService } from "@t3tools/shared/Net";
 
 import { ServerConfig } from "./config";
 import {
   attachmentsRouteLayer,
+  difitProxyRouteLayer,
   pluginWebAssetsRouteLayer,
   projectFaviconRouteLayer,
   staticAndDevRouteLayer,
 } from "./http";
+import { closeDifitManager } from "./difitService";
 import { fixPath } from "./os-jank";
 import { websocketRpcRouteLayer } from "./ws";
 import { OpenLive } from "./open";
@@ -171,6 +174,10 @@ const WorkspaceLayerLive = Layer.mergeAll(
   ),
 );
 
+const DifitRuntimeLive = Layer.effectDiscard(
+  Effect.acquireRelease(Effect.void, () => closeDifitManager),
+);
+
 const RuntimeServicesLive = Layer.empty.pipe(
   Layer.provideMerge(ServerRuntimeStartupLive),
   Layer.provideMerge(ReactorLayerLive),
@@ -188,6 +195,7 @@ const RuntimeServicesLive = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
   Layer.provideMerge(PluginManagerLive),
+  Layer.provideMerge(DifitRuntimeLive),
 
   // Misc.
   Layer.provideMerge(AnalyticsServiceLayerLive),
@@ -197,6 +205,7 @@ const RuntimeServicesLive = Layer.empty.pipe(
 
 export const makeRoutesLayer = Layer.mergeAll(
   attachmentsRouteLayer,
+  difitProxyRouteLayer,
   pluginWebAssetsRouteLayer,
   projectFaviconRouteLayer,
   staticAndDevRouteLayer,
@@ -227,6 +236,7 @@ export const makeServerLayer = Layer.unwrap(
     return serverApplicationLayer.pipe(
       Layer.provideMerge(RuntimeServicesLive),
       Layer.provideMerge(HttpServerLive),
+      Layer.provideMerge(NetService.layer),
       Layer.provide(ServerLoggerLive),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(PlatformServicesLive),

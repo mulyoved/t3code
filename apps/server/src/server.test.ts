@@ -1,6 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { NetService } from "@t3tools/shared/Net";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
@@ -48,6 +49,11 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
+import {
+  __resetDifitManagerForTests,
+  __setDifitManagerForTests,
+  type DifitManagerShape,
+} from "./difitService.ts";
 import { PluginManagerService, type PluginManagerShape } from "./plugins/service.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
@@ -133,6 +139,7 @@ const buildAppUnderTest = (options?: {
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     pluginManager?: Partial<PluginManagerShape>;
+    difitManager?: Partial<DifitManagerShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -158,6 +165,20 @@ const buildAppUnderTest = (options?: {
       ...options?.config,
     } satisfies ServerConfigShape;
     const layerConfig = Layer.succeed(ServerConfig, config);
+    const difitManager = {
+      open: async () => ({ ok: false, reason: "thread_not_found" }),
+      close: async () => ({ ok: true }),
+      status: async () => ({ state: "idle" }),
+      handleProxyRequest: async () => null,
+      ...options?.layers?.difitManager,
+    } satisfies DifitManagerShape;
+
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        __setDifitManagerForTests(difitManager);
+      }),
+      () => Effect.promise(() => __resetDifitManagerForTests()).pipe(Effect.ignore),
+    );
 
     const appLayer = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
@@ -269,6 +290,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.pluginManager,
         }),
       ),
+      Layer.provide(NetService.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provide(layerConfig),
     );

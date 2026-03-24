@@ -9,6 +9,7 @@ import {
 } from "./attachmentPaths";
 import { resolveAttachmentPathById } from "./attachmentStore";
 import { ServerConfig } from "./config";
+import { getDifitManager } from "./difitService";
 import { PluginManagerService } from "./plugins/service";
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver";
 
@@ -147,6 +148,34 @@ export const pluginWebAssetsRouteLayer = HttpRouter.add(
         "Cache-Control": "no-store",
       },
     });
+  }),
+);
+
+export const difitProxyRouteLayer = HttpRouter.add(
+  "GET",
+  "/__difit/*",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const difitManager = yield* getDifitManager;
+    const webRequest = yield* HttpServerRequest.toWeb(request);
+    const proxiedResponse = yield* Effect.tryPromise({
+      try: () =>
+        difitManager.handleProxyRequest({
+          request: webRequest,
+          url: url.value,
+        }),
+      catch: () => new Response("Bad Gateway", { status: 502 }),
+    });
+    if (!proxiedResponse) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    return HttpServerResponse.fromWeb(proxiedResponse);
   }),
 );
 

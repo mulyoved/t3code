@@ -49,6 +49,20 @@ const rpcClientMock = {
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
   },
+  plugins: {
+    getBootstrap: vi.fn(),
+    callProcedure: vi.fn(),
+    subscribeRegistry: vi.fn(),
+  },
+  skills: {
+    list: vi.fn(),
+  },
+  prompts: {
+    list: vi.fn(),
+  },
+  difit: {
+    open: vi.fn(),
+  },
   shell: {
     openInEditor: vi.fn(),
   },
@@ -307,6 +321,18 @@ describe("wsNativeApi", () => {
 
     await expect(api.server.refreshProviders()).resolves.toEqual({ providers: nextProviders });
     expect(rpcClientMock.server.refreshProviders).toHaveBeenCalledWith();
+  });
+
+  it("forwards difit open requests directly to the RPC client", async () => {
+    rpcClientMock.difit.open.mockResolvedValue({ ok: true });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.difit.open({ threadId: ThreadId.makeUnsafe("thread-1") });
+
+    expect(rpcClientMock.difit.open).toHaveBeenCalledWith({
+      threadId: "thread-1",
+    });
   });
 
   it("forwards server settings updates directly to the RPC client", async () => {

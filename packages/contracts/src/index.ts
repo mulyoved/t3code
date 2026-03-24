@@ -15,3 +15,4 @@ export * from "./rpc";
 export * from "./skill";
 export * from "./prompt";
 export * from "./plugin";
+export * from "./difit";

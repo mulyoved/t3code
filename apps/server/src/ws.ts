@@ -21,6 +21,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { ServerConfig } from "./config";
+import { getDifitManager } from "./difitService";
 import { GitCore } from "./git/Services/GitCore";
 import { GitManager } from "./git/Services/GitManager";
 import { Keybindings } from "./keybindings";
@@ -56,6 +57,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const serverSettings = yield* ServerSettingsService;
     const startup = yield* ServerRuntimeStartup;
     const pluginManager = yield* PluginManagerService;
+    const difitManager = yield* getDifitManager;
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
 
@@ -246,6 +248,13 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             message: `Failed to list prompts: ${String(cause)}`,
           }),
         }).pipe(Effect.map((prompts) => ({ prompts }))),
+      [WS_METHODS.difitOpen]: (input) =>
+        Effect.tryPromise({
+          try: () => difitManager.open(input),
+          catch: (cause) => ({
+            message: `Failed to open difit: ${String(cause)}`,
+          }),
+        }),
       [WS_METHODS.shellOpenInEditor]: (input) => open.openInEditor(input),
       [WS_METHODS.gitStatus]: (input) => gitManager.status(input),
       [WS_METHODS.gitPull]: (input) => git.pullCurrentBranch(input.cwd),

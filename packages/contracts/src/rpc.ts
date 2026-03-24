@@ -3,6 +3,7 @@ import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { OpenError, OpenInEditorInput } from "./editor";
+import { DifitOpenInput, DifitOpenResult } from "./difit";
 import {
   GitActionProgressEvent,
   GitCheckoutInput,
@@ -88,6 +89,7 @@ export const WS_METHODS = {
   pluginsCallProcedure: "plugins.callProcedure",
   skillsList: "skills.list",
   promptsList: "prompts.list",
+  difitOpen: "difit.open",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -194,6 +196,12 @@ export const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
 export const WsPromptsListRpc = Rpc.make(WS_METHODS.promptsList, {
   payload: PromptsListInput,
   success: PromptsListResult,
+  error: WsMessageError,
+});
+
+export const WsDifitOpenRpc = Rpc.make(WS_METHODS.difitOpen, {
+  payload: DifitOpenInput,
+  success: DifitOpenResult,
   error: WsMessageError,
 });
 
@@ -382,6 +390,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsCallProcedureRpc,
   WsSkillsListRpc,
   WsPromptsListRpc,
+  WsDifitOpenRpc,
   WsShellOpenInEditorRpc,
   WsGitStatusRpc,
   WsGitPullRpc,

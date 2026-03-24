@@ -55,6 +55,7 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
+import type { DifitOpenInput, DifitOpenResult } from "./difit";
 import { ServerSettings, ServerSettingsPatch } from "./settings";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -189,6 +190,9 @@ export interface NativeApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+  };
+  difit: {
+    open: (input: DifitOpenInput) => Promise<DifitOpenResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

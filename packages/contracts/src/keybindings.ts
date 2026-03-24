@@ -33,6 +33,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "terminal.new",
   "terminal.close",
   "diff.toggle",
+  "difit.toggle",
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",

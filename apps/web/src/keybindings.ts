@@ -60,6 +60,14 @@ function normalizeEventKey(key: string): string {
 
 function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const keys = new Set([normalizeEventKey(event.key)]);
+
+  if (event.altKey) {
+    const normalizedCode = normalizeEventCode(event.code);
+    if (normalizedCode) {
+      keys.add(normalizedCode);
+    }
+  }
+
   const aliases = event.code ? EVENT_CODE_KEY_ALIASES[event.code] : undefined;
   if (!aliases) return keys;
 
@@ -67,6 +75,44 @@ function resolveEventKeys(event: ShortcutEventLike): Set<string> {
     keys.add(alias);
   }
   return keys;
+}
+
+function normalizeEventCode(code: string | undefined): string | null {
+  if (!code) return null;
+  if (code.startsWith("Key") && code.length === 4) {
+    return code.slice(3).toLowerCase();
+  }
+  if (code.startsWith("Digit") && code.length === 6) {
+    return code.slice(5);
+  }
+  switch (code) {
+    case "Backquote":
+      return "`";
+    case "Minus":
+      return "-";
+    case "Equal":
+      return "=";
+    case "Backslash":
+      return "\\";
+    case "BracketLeft":
+      return "[";
+    case "BracketRight":
+      return "]";
+    case "Semicolon":
+      return ";";
+    case "Quote":
+      return "'";
+    case "Comma":
+      return ",";
+    case "Period":
+      return ".";
+    case "Slash":
+      return "/";
+    case "Space":
+      return " ";
+    default:
+      return null;
+  }
 }
 
 function matchesShortcutModifiers(

@@ -61,6 +61,9 @@ export interface WsRpcClient {
   readonly prompts: {
     readonly list: RpcUnaryMethod<typeof WS_METHODS.promptsList>;
   };
+  readonly difit: {
+    readonly open: RpcUnaryMethod<typeof WS_METHODS.difitOpen>;
+  };
   readonly shell: {
     readonly openInEditor: (input: {
       readonly cwd: Parameters<NativeApi["shell"]["openInEditor"]>[0];
@@ -155,6 +158,9 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
     },
     prompts: {
       list: (input) => transport.request((client) => client[WS_METHODS.promptsList](input)),
+    },
+    difit: {
+      open: (input) => transport.request((client) => client[WS_METHODS.difitOpen](input)),
     },
     shell: {
       openInEditor: (input) =>
