@@ -3,12 +3,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   AppSettingsSchema,
+  DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+  DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
   DEFAULT_TIMESTAMP_FORMAT,
   getAppModelOptions,
   getCustomModelOptionsByProvider,
   getCustomModelsByProvider,
   getCustomModelsForProvider,
   getDefaultCustomModelsForProvider,
+  getProviderStartOptions,
   MODEL_PROVIDER_SETTINGS,
   normalizeCustomModelSlugs,
   patchCustomModels,
@@ -110,11 +113,50 @@ describe("timestamp format defaults", () => {
   });
 });
 
+describe("sidebar sort defaults", () => {
+  it("defaults project sorting to updated_at", () => {
+    expect(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER).toBe("updated_at");
+  });
+
+  it("defaults thread sorting to updated_at", () => {
+    expect(DEFAULT_SIDEBAR_THREAD_SORT_ORDER).toBe("updated_at");
+  });
+});
+
 describe("provider-specific custom models", () => {
   it("includes provider-specific custom slugs in non-codex model lists", () => {
     const claudeOptions = getAppModelOptions("claudeAgent", ["claude/custom-opus"]);
 
     expect(claudeOptions.some((option) => option.slug === "claude/custom-opus")).toBe(true);
+  });
+});
+
+describe("getProviderStartOptions", () => {
+  it("returns only populated provider overrides", () => {
+    expect(
+      getProviderStartOptions({
+        claudeBinaryPath: "/usr/local/bin/claude",
+        codexBinaryPath: "",
+        codexHomePath: "/Users/you/.codex",
+      }),
+    ).toEqual({
+      claudeAgent: {
+        binaryPath: "/usr/local/bin/claude",
+      },
+      codex: {
+        homePath: "/Users/you/.codex",
+      },
+    });
+  });
+
+  it("returns undefined when no provider overrides are configured", () => {
+    expect(
+      getProviderStartOptions({
+        claudeBinaryPath: "",
+        codexBinaryPath: "",
+        codexHomePath: "",
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -209,11 +251,14 @@ describe("AppSettingsSchema", () => {
         }),
       ),
     ).toMatchObject({
+      claudeBinaryPath: "",
       codexBinaryPath: "/usr/local/bin/codex",
       codexHomePath: "",
       defaultThreadEnvMode: "local",
       confirmThreadDelete: false,
       enableAssistantStreaming: false,
+      sidebarProjectSortOrder: DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+      sidebarThreadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
       timestampFormat: DEFAULT_TIMESTAMP_FORMAT,
       customCodexModels: [],
       customClaudeModels: [],
