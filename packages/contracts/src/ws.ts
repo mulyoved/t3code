@@ -12,6 +12,7 @@ import {
   OrchestrationReplayEventsInput,
 } from "./orchestration";
 import {
+  GitActionProgressEvent,
   GitCheckoutInput,
   GitCreateBranchInput,
   GitPreparePullRequestThreadInput,
@@ -89,6 +90,7 @@ export const WS_METHODS = {
 // ── Push Event Channels ──────────────────────────────────────────────
 
 export const WS_CHANNELS = {
+  gitActionProgress: "git.actionProgress",
   terminalEvent: "terminal.event",
   pluginsRegistryUpdated: "plugins.registryUpdated",
   serverWelcome: "server.welcome",
@@ -187,6 +189,7 @@ export type WsWelcomePayload = typeof WsWelcomePayload.Type;
 export interface WsPushPayloadByChannel {
   readonly [WS_CHANNELS.serverWelcome]: WsWelcomePayload;
   readonly [WS_CHANNELS.serverConfigUpdated]: typeof ServerConfigUpdatedPayload.Type;
+  readonly [WS_CHANNELS.gitActionProgress]: typeof GitActionProgressEvent.Type;
   readonly [WS_CHANNELS.terminalEvent]: typeof TerminalEvent.Type;
   readonly [WS_CHANNELS.pluginsRegistryUpdated]: typeof PluginRegistryUpdatedPayload.Type;
   readonly [ORCHESTRATION_WS_CHANNELS.domainEvent]: OrchestrationEvent;
@@ -211,6 +214,10 @@ export const WsPushServerConfigUpdated = makeWsPushSchema(
   WS_CHANNELS.serverConfigUpdated,
   ServerConfigUpdatedPayload,
 );
+export const WsPushGitActionProgress = makeWsPushSchema(
+  WS_CHANNELS.gitActionProgress,
+  GitActionProgressEvent,
+);
 export const WsPushTerminalEvent = makeWsPushSchema(WS_CHANNELS.terminalEvent, TerminalEvent);
 export const WsPushPluginsRegistryUpdated = makeWsPushSchema(
   WS_CHANNELS.pluginsRegistryUpdated,
@@ -222,6 +229,7 @@ export const WsPushOrchestrationDomainEvent = makeWsPushSchema(
 );
 
 export const WsPushChannelSchema = Schema.Literals([
+  WS_CHANNELS.gitActionProgress,
   WS_CHANNELS.serverWelcome,
   WS_CHANNELS.serverConfigUpdated,
   WS_CHANNELS.terminalEvent,
@@ -233,6 +241,7 @@ export type WsPushChannelSchema = typeof WsPushChannelSchema.Type;
 export const WsPush = Schema.Union([
   WsPushServerWelcome,
   WsPushServerConfigUpdated,
+  WsPushGitActionProgress,
   WsPushTerminalEvent,
   WsPushPluginsRegistryUpdated,
   WsPushOrchestrationDomainEvent,
