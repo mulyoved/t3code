@@ -139,11 +139,7 @@ export async function proxyDifitRequest(options: ProxyDifitRequestOptions): Prom
 
   const text = await proxiedResponse.text();
   const rewrittenBody = new TextEncoder().encode(
-    rewriteDifitTextAsset(
-      text,
-      proxyBasePath,
-      proxiedResponse.headers.get("content-type"),
-    ),
+    rewriteDifitTextAsset(text, proxyBasePath, proxiedResponse.headers.get("content-type")),
   );
 
   return new Response(rewrittenBody, {

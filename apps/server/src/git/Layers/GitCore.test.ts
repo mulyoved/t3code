@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import nodeFs from "node:fs/promises";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -26,7 +27,16 @@ function makeTmpDir(
 ): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    return yield* fileSystem.makeTempDirectoryScoped({ prefix });
+    return yield* Effect.acquireRelease(fileSystem.makeTempDirectory({ prefix }), (dir) =>
+      Effect.promise(() =>
+        nodeFs.rm(dir, {
+          recursive: true,
+          force: true,
+          maxRetries: 10,
+          retryDelay: 50,
+        }),
+      ).pipe(Effect.ignore),
+    );
   });
 }
 
@@ -778,6 +788,8 @@ it.layer(TestLayer)("git integration", (it) => {
 
     it.effect("checks out a remote tracking branch when remote name contains slashes", () =>
       Effect.gen(function* () {
+        const services = yield* Effect.services();
+        const runPromise = Effect.runPromiseWith(services);
         const remote = yield* makeTmpDir();
         const source = yield* makeTmpDir();
         const remoteName = "my-org/upstream";
@@ -804,6 +816,20 @@ it.layer(TestLayer)("git integration", (it) => {
           branch: `${remoteName}/${featureBranch}`,
         });
 
+        const core = yield* GitCore;
+        yield* Effect.promise(() =>
+          vi.waitFor(
+            async () => {
+              const details = await runPromise(core.statusDetails(source));
+              expect(details.branch).toBe("upstream/feature");
+              expect(details.behindCount).toBe(0);
+            },
+            {
+              timeout: 10_000,
+              interval: 100,
+            },
+          ),
+        );
         expect(yield* git(source, ["branch", "--show-current"])).toBe("upstream/feature");
       }),
     );

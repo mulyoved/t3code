@@ -50,11 +50,7 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import {
-  PluginBootstrap,
-  PluginProcedureCallInput,
-  PluginRegistryUpdatedPayload,
-} from "./plugin";
+import { PluginBootstrap, PluginProcedureCallInput, PluginRegistryUpdatedPayload } from "./plugin";
 import { PromptsListInput, PromptsListResult } from "./prompt";
 import { SkillsListInput, SkillsListResult } from "./skill";
 import {

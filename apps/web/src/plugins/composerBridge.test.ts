@@ -13,7 +13,7 @@ const skills: SkillSummary[] = [
     sourceKind: "user",
     sourcePath: "/skills/react-doctor",
     allowImplicitInvocation: true,
-    defaultPrompt: "$react-doctor ",
+    defaultPrompt: "$react-doctor",
   },
   {
     id: "project:/skills/megaplan",
@@ -23,7 +23,7 @@ const skills: SkillSummary[] = [
     sourceKind: "project",
     sourcePath: "/skills/megaplan",
     allowImplicitInvocation: true,
-    defaultPrompt: "$megaplan ",
+    defaultPrompt: "$megaplan",
   },
 ];
 

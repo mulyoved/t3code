@@ -103,7 +103,7 @@ async function readSkillSummary(input: {
     sourceKind: input.sourceKind,
     sourcePath: input.skillDir,
     allowImplicitInvocation: true,
-    defaultPrompt: `$${parsed.name} `,
+    defaultPrompt: `$${parsed.name}`,
   } satisfies SkillSummary;
 }
 

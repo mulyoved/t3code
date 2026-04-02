@@ -125,6 +125,10 @@ function buildSkillSourceLabel(sourceKind: SkillSummary["sourceKind"]): string {
   return sourceKind === "project" ? "Project" : sourceKind === "user" ? "User" : "System";
 }
 
+function toComposerInsertionText(command: string): string {
+  return `${command} `;
+}
+
 export function buildSkillComposerItems(input: {
   skills: readonly SkillSummary[];
   query: string;
@@ -144,7 +148,7 @@ export function buildSkillComposerItems(input: {
       label: skill.displayName,
       description: skill.description,
       sourceLabel: buildSkillSourceLabel(skill.sourceKind),
-      replacementText: skill.defaultPrompt,
+      replacementText: toComposerInsertionText(skill.defaultPrompt),
     }));
 }
 

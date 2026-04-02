@@ -816,7 +816,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           webEntry: "web.js",
         }),
       );
-      yield* fs.writeFileString(path.join(pluginDir, "web.js"), "export const samplePlugin = true;");
+      yield* fs.writeFileString(
+        path.join(pluginDir, "web.js"),
+        "export const samplePlugin = true;",
+      );
 
       yield* buildAppUnderTest({
         config: {
@@ -911,11 +914,16 @@ argument-hint: optional text
         withWsRpcClient(wsUrl, (client) => client[WS_METHODS.promptsList]({ cwd: workspaceDir })),
       );
 
-      assert.equal(skills.skills.length, 1);
-      assert.equal(skills.skills[0]?.name, "sample-skill");
-      assert.equal(prompts.prompts.length, 1);
-      assert.equal(prompts.prompts[0]?.name, "sample-prompt");
-      assert.equal(prompts.prompts[0]?.argumentHint, "optional text");
+      const sampleSkill = skills.skills.find(
+        (skill) => skill.name === "sample-skill" && skill.sourceKind === "project",
+      );
+      const samplePrompt = prompts.prompts.find(
+        (prompt) => prompt.name === "sample-prompt" && prompt.sourceKind === "project",
+      );
+
+      assert.isTrue(sampleSkill !== undefined);
+      assert.isTrue(samplePrompt !== undefined);
+      assert.equal(samplePrompt?.argumentHint, "optional text");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

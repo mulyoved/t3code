@@ -68,10 +68,7 @@ export interface DifitManager {
   readonly open: (input: DifitOpenInput) => Promise<DifitOpenResult>;
   readonly close: () => Promise<DifitCloseResult>;
   readonly status: () => Promise<DifitStatusResult>;
-  readonly handleProxyRequest: (input: {
-    request: Request;
-    url: URL;
-  }) => Promise<Response | null>;
+  readonly handleProxyRequest: (input: { request: Request; url: URL }) => Promise<Response | null>;
 }
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

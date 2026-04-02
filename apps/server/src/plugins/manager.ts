@@ -3,11 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Exit, Schema } from "effect";
 
-import type {
-  PluginBootstrap,
-  PluginListItem,
-  ProjectEntry,
-} from "@t3tools/contracts";
+import type { PluginBootstrap, PluginListItem, ProjectEntry } from "@t3tools/contracts";
 import type {
   ServerPluginContext,
   ServerPluginFactory,
@@ -181,7 +177,9 @@ async function searchWorkspaceEntries(input: {
       .readdir(directoryPath, { withFileTypes: true })
       .catch(() => []);
 
-    for (const dirEntry of dirEntries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+    for (const dirEntry of dirEntries.toSorted((left, right) =>
+      left.name.localeCompare(right.name),
+    )) {
       if (truncated) {
         return;
       }
@@ -234,8 +232,12 @@ async function searchWorkspaceEntries(input: {
       entry,
       score: scoreWorkspaceEntry(entry, normalizedQuery),
     }))
-    .filter((candidate): candidate is { entry: ProjectEntry; score: number } => candidate.score !== null)
-    .toSorted((left, right) => left.score - right.score || left.entry.path.localeCompare(right.entry.path));
+    .filter(
+      (candidate): candidate is { entry: ProjectEntry; score: number } => candidate.score !== null,
+    )
+    .toSorted(
+      (left, right) => left.score - right.score || left.entry.path.localeCompare(right.entry.path),
+    );
 
   return {
     entries: rankedEntries.slice(0, limit).map((candidate) => candidate.entry),
