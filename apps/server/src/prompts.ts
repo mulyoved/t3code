@@ -94,7 +94,7 @@ async function readPromptSummary(input: {
     ...(parsed.argumentHint ? { argumentHint: parsed.argumentHint } : {}),
     sourceKind: input.sourceKind,
     sourcePath: input.promptFilePath,
-    defaultPrompt: `/${fallbackName}`,
+    defaultPrompt: `/${fallbackName} `,
   } satisfies PromptSummary;
 }
 
