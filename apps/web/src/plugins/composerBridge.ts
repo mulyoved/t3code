@@ -2,7 +2,6 @@ import type {
   PromptSummary,
   ProjectEntry,
   ProviderKind,
-  ModelSlug,
   PluginComposerItem,
   SkillSummary,
 } from "@t3tools/contracts";
@@ -19,7 +18,7 @@ export interface SecondaryComposerMenuState {
 interface SearchableModelOption {
   readonly provider: ProviderKind;
   readonly providerLabel: string;
-  readonly slug: ModelSlug;
+  readonly slug: string;
   readonly name: string;
   readonly searchSlug: string;
   readonly searchName: string;

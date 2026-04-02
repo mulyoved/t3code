@@ -1,6 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import type { IncomingMessage, ServerResponse } from "node:http";
-
 import type {
   DifitCloseResult,
   DifitProcessDiagnostics,
@@ -70,11 +68,7 @@ export interface DifitManager {
   readonly open: (input: DifitOpenInput) => Promise<DifitOpenResult>;
   readonly close: () => Promise<DifitCloseResult>;
   readonly status: () => Promise<DifitStatusResult>;
-  readonly handleProxyRequest: (input: {
-    request: IncomingMessage;
-    response: ServerResponse;
-    url: URL;
-  }) => Promise<boolean>;
+  readonly handleProxyRequest: (input: { request: Request; url: URL }) => Promise<Response | null>;
 }
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -432,28 +426,29 @@ export function createDifitManager(dependencies: DifitManagerDependencies): Difi
         ...(runtimeState.reason ? { reason: runtimeState.reason } : {}),
         ...(runtimeState.diagnostics ? { diagnostics: runtimeState.diagnostics } : {}),
       }),
-    handleProxyRequest: async ({ request, response, url }) => {
+    handleProxyRequest: async ({ request, url }) => {
       const match = matchDifitProxyPath(url.pathname);
       if (!match) {
-        return false;
+        return null;
       }
       if (
         runtimeState.state !== "ready" ||
         !activeProcess ||
         activeProcess.sessionRevision !== match.sessionRevision
       ) {
-        response.writeHead(503, { "Content-Type": "text/plain" });
-        response.end("Difit session unavailable");
-        return true;
+        return new Response("Difit session unavailable", {
+          status: 503,
+          headers: {
+            "Content-Type": "text/plain",
+          },
+        });
       }
-      await proxyDifitRequest({
+      return await proxyDifitRequest({
         request,
-        response,
         url,
-        targetPort: activeProcess.port,
+        targetOrigin: `http://${LOOPBACK_HOST}:${activeProcess.port}`,
         proxyBasePath: buildDifitProxyBasePath(activeProcess.sessionRevision),
       });
-      return true;
     },
   };
 }

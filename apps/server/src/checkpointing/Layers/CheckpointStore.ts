@@ -14,16 +14,15 @@ import { randomUUID } from "node:crypto";
 import { Effect, Layer, FileSystem, Path } from "effect";
 
 import { CheckpointInvariantError } from "../Errors.ts";
-import { GitCommandError } from "../../git/Errors.ts";
-import { GitServiceLive } from "../../git/Layers/GitService.ts";
-import { GitService } from "../../git/Services/GitService.ts";
+import { GitCommandError } from "@t3tools/contracts";
+import { GitCore } from "../../git/Services/GitCore.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointRef } from "@t3tools/contracts";
 
 const makeCheckpointStore = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const git = yield* GitService;
+  const git = yield* GitCore;
 
   const resolveHeadCommit = (cwd: string): Effect.Effect<string | null, GitCommandError> =>
     git
@@ -277,6 +276,4 @@ const makeCheckpointStore = Effect.gen(function* () {
   } satisfies CheckpointStoreShape;
 });
 
-export const CheckpointStoreLive = Layer.effect(CheckpointStore, makeCheckpointStore).pipe(
-  Layer.provideMerge(GitServiceLive),
-);
+export const CheckpointStoreLive = Layer.effect(CheckpointStore, makeCheckpointStore);

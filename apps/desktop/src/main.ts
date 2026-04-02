@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import type {
   DesktopTheme,
   DesktopUpdateActionResult,
+  DesktopUpdateCheckResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
@@ -56,6 +57,8 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
+const UPDATE_CHECK_CHANNEL = "desktop:update-check";
+const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "t3";
@@ -63,6 +66,8 @@ const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
+const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "t3code-dev.desktop" : "t3code.desktop";
+const LINUX_WM_CLASS = isDevelopment ? "t3code-dev" : "t3code";
 const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
 const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
@@ -77,6 +82,9 @@ const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
+type LinuxDesktopNamedApp = Electron.App & {
+  setDesktopName?: (desktopName: string) => void;
+};
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
@@ -111,6 +119,17 @@ function logScope(scope: string): string {
 
 function sanitizeLogValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function backendChildEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.T3CODE_PORT;
+  delete env.T3CODE_AUTH_TOKEN;
+  delete env.T3CODE_MODE;
+  delete env.T3CODE_NO_BROWSER;
+  delete env.T3CODE_HOST;
+  delete env.T3CODE_DESKTOP_WS_URL;
+  return env;
 }
 
 function writeDesktopLogHeader(message: string): void {
@@ -249,6 +268,10 @@ function captureBackendOutput(child: ChildProcess.ChildProcess): void {
 
 initializePackagedLogging();
 
+if (process.platform === "linux") {
+  app.commandLine.appendSwitch("class", LINUX_WM_CLASS);
+}
+
 function getDestructiveMenuIcon(): Electron.NativeImage | undefined {
   if (process.platform !== "darwin") return undefined;
   if (destructiveMenuIconCache !== undefined) {
@@ -275,10 +298,12 @@ let updatePollTimer: ReturnType<typeof setInterval> | null = null;
 let updateStartupTimer: ReturnType<typeof setTimeout> | null = null;
 let updateCheckInFlight = false;
 let updateDownloadInFlight = false;
+let updateInstallInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
+  if (updateInstallInFlight) return "install";
   if (updateDownloadInFlight) return "download";
   if (updateCheckInFlight) return "check";
   return updateState.errorContext;
@@ -374,7 +399,7 @@ function resolveAboutCommitHash(): string | null {
 }
 
 function resolveBackendEntry(): string {
-  return Path.join(resolveAppRoot(), "apps/server/dist/index.mjs");
+  return Path.join(resolveAppRoot(), "apps/server/dist/bin.mjs");
 }
 
 function resolveBackendCwd(): string {
@@ -699,6 +724,10 @@ function configureAppIdentity(): void {
     app.setAppUserModelId(APP_USER_MODEL_ID);
   }
 
+  if (process.platform === "linux") {
+    (app as LinuxDesktopNamedApp).setDesktopName?.(LINUX_DESKTOP_ENTRY_NAME);
+  }
+
   if (process.platform === "darwin" && app.dock) {
     const iconPath = resolveIconPath("png");
     if (iconPath) {
@@ -742,13 +771,13 @@ function shouldEnableAutoUpdates(): boolean {
   );
 }
 
-async function checkForUpdates(reason: string): Promise<void> {
-  if (isQuitting || !updaterConfigured || updateCheckInFlight) return;
+async function checkForUpdates(reason: string): Promise<boolean> {
+  if (isQuitting || !updaterConfigured || updateCheckInFlight) return false;
   if (updateState.status === "downloading" || updateState.status === "downloaded") {
     console.info(
       `[desktop-updater] Skipping update check (${reason}) while status=${updateState.status}.`,
     );
-    return;
+    return false;
   }
   updateCheckInFlight = true;
   setUpdateState(reduceDesktopUpdateStateOnCheckStart(updateState, new Date().toISOString()));
@@ -756,12 +785,14 @@ async function checkForUpdates(reason: string): Promise<void> {
 
   try {
     await autoUpdater.checkForUpdates();
+    return true;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     setUpdateState(
       reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()),
     );
     console.error(`[desktop-updater] Failed to check for updates: ${message}`);
+    return true;
   } finally {
     updateCheckInFlight = false;
   }
@@ -795,13 +826,22 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
   }
 
   isQuitting = true;
+  updateInstallInFlight = true;
   clearUpdatePollTimer();
   try {
     await stopBackendAndWaitForExit();
-    autoUpdater.quitAndInstall();
-    return { accepted: true, completed: true };
+    // Destroy all windows before launching the NSIS installer to avoid the installer finding live windows it needs to close.
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.destroy();
+    }
+    // `quitAndInstall()` only starts the handoff to the updater. The actual
+    // install may still fail asynchronously, so keep the action incomplete
+    // until we either quit or receive an updater error.
+    autoUpdater.quitAndInstall(true, true);
+    return { accepted: true, completed: false };
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
+    updateInstallInFlight = false;
     isQuitting = false;
     setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
     console.error(`[desktop-updater] Failed to install update: ${message}`);
@@ -836,6 +876,13 @@ function configureAutoUpdater(): void {
         token: githubToken,
       });
     }
+  }
+
+  if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
+    autoUpdater.setFeedURL({
+      provider: "generic",
+      url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
+    });
   }
 
   autoUpdater.autoDownload = false;
@@ -874,6 +921,13 @@ function configureAutoUpdater(): void {
   });
   autoUpdater.on("error", (error) => {
     const message = formatErrorMessage(error);
+    if (updateInstallInFlight) {
+      updateInstallInFlight = false;
+      isQuitting = false;
+      setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
+      console.error(`[desktop-updater] Updater error: ${message}`);
+      return;
+    }
     if (!updateCheckInFlight && !updateDownloadInFlight) {
       setUpdateState({
         status: "error",
@@ -918,17 +972,6 @@ function configureAutoUpdater(): void {
   }, AUTO_UPDATE_POLL_INTERVAL_MS);
   updatePollTimer.unref();
 }
-function backendEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    T3CODE_MODE: "desktop",
-    T3CODE_NO_BROWSER: "1",
-    T3CODE_PORT: String(backendPort),
-    T3CODE_HOME: BASE_DIR,
-    T3CODE_AUTH_TOKEN: backendAuthToken,
-  };
-}
-
 function scheduleBackendRestart(reason: string): void {
   if (isQuitting || restartTimer) return;
 
@@ -952,16 +995,35 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
-  const child = ChildProcess.spawn(process.execPath, [backendEntry], {
+  const child = ChildProcess.spawn(process.execPath, [backendEntry, "--bootstrap-fd", "3"], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
     env: {
-      ...backendEnv(),
+      ...backendChildEnv(),
       ELECTRON_RUN_AS_NODE: "1",
     },
-    stdio: captureBackendLogs ? ["ignore", "pipe", "pipe"] : "inherit",
+    stdio: captureBackendLogs
+      ? ["ignore", "pipe", "pipe", "pipe"]
+      : ["ignore", "inherit", "inherit", "pipe"],
   });
+  const bootstrapStream = child.stdio[3];
+  if (bootstrapStream && "write" in bootstrapStream) {
+    bootstrapStream.write(
+      `${JSON.stringify({
+        mode: "desktop",
+        noBrowser: true,
+        port: backendPort,
+        t3Home: BASE_DIR,
+        authToken: backendAuthToken,
+      })}\n`,
+    );
+    bootstrapStream.end();
+  } else {
+    child.kill("SIGTERM");
+    scheduleBackendRestart("missing desktop bootstrap pipe");
+    return;
+  }
   backendProcess = child;
   let backendSessionClosed = false;
   const closeBackendSession = (details: string) => {
@@ -1072,6 +1134,11 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.removeAllListeners(GET_WS_URL_CHANNEL);
+  ipcMain.on(GET_WS_URL_CHANNEL, (event) => {
+    event.returnValue = backendWsUrl;
+  });
+
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
@@ -1116,6 +1183,7 @@ function registerIpcHandlers(): void {
           id: item.id,
           label: item.label,
           destructive: item.destructive === true,
+          disabled: item.disabled === true,
         }));
       if (normalizedItems.length === 0) {
         return null;
@@ -1146,6 +1214,7 @@ function registerIpcHandlers(): void {
           }
           const itemOption: MenuItemConstructorOptions = {
             label: item.label,
+            enabled: !item.disabled,
             click: () => resolve(item.id),
           };
           if (item.destructive) {
@@ -1210,6 +1279,21 @@ function registerIpcHandlers(): void {
       completed: result.completed,
       state: updateState,
     } satisfies DesktopUpdateActionResult;
+  });
+
+  ipcMain.removeHandler(UPDATE_CHECK_CHANNEL);
+  ipcMain.handle(UPDATE_CHECK_CHANNEL, async () => {
+    if (!updaterConfigured) {
+      return {
+        checked: false,
+        state: updateState,
+      } satisfies DesktopUpdateCheckResult;
+    }
+    const checked = await checkForUpdates("web-ui");
+    return {
+      checked,
+      state: updateState,
+    } satisfies DesktopUpdateCheckResult;
   });
 }
 
@@ -1320,9 +1404,9 @@ async function bootstrap(): Promise<void> {
   );
   writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
   backendAuthToken = Crypto.randomBytes(24).toString("hex");
-  backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
-  process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
-  writeDesktopLogHeader(`bootstrap resolved websocket url=${backendWsUrl}`);
+  const baseUrl = `ws://127.0.0.1:${backendPort}`;
+  backendWsUrl = `${baseUrl}/?token=${encodeURIComponent(backendAuthToken)}`;
+  writeDesktopLogHeader(`bootstrap resolved websocket endpoint baseUrl=${baseUrl}`);
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
@@ -1334,6 +1418,7 @@ async function bootstrap(): Promise<void> {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  updateInstallInFlight = false;
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
   stopBackend();
@@ -1363,7 +1448,7 @@ app
   });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (process.platform !== "darwin" && !isQuitting) {
     app.quit();
   }
 });

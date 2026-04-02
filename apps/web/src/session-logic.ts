@@ -463,6 +463,7 @@ export function deriveWorkLogEntries(
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
     .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
+    .filter((activity) => activity.kind !== "context-window.updated")
     .filter((activity) => activity.summary !== "Checkpoint captured")
     .filter((activity) => !isPlanBoundaryToolActivity(activity))
     .map(toDerivedWorkLogEntry);
@@ -849,6 +850,53 @@ export function deriveTimelineEntries(
   return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );
+}
+
+export function deriveCompletionDividerBeforeEntryId(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+  latestTurn: Pick<
+    OrchestrationLatestTurn,
+    "assistantMessageId" | "startedAt" | "completedAt"
+  > | null,
+): string | null {
+  if (!latestTurn?.startedAt || !latestTurn.completedAt) {
+    return null;
+  }
+
+  if (latestTurn.assistantMessageId) {
+    const exactMatch = timelineEntries.find(
+      (timelineEntry) =>
+        timelineEntry.kind === "message" &&
+        timelineEntry.message.role === "assistant" &&
+        timelineEntry.message.id === latestTurn.assistantMessageId,
+    );
+    if (exactMatch) {
+      return exactMatch.id;
+    }
+  }
+
+  const turnStartedAt = Date.parse(latestTurn.startedAt);
+  const turnCompletedAt = Date.parse(latestTurn.completedAt);
+  if (Number.isNaN(turnStartedAt) || Number.isNaN(turnCompletedAt)) {
+    return null;
+  }
+
+  let inRangeMatch: string | null = null;
+  let fallbackMatch: string | null = null;
+  for (const timelineEntry of timelineEntries) {
+    if (timelineEntry.kind !== "message" || timelineEntry.message.role !== "assistant") {
+      continue;
+    }
+    const messageAt = Date.parse(timelineEntry.message.createdAt);
+    if (Number.isNaN(messageAt) || messageAt < turnStartedAt) {
+      continue;
+    }
+    fallbackMatch = timelineEntry.id;
+    if (messageAt <= turnCompletedAt) {
+      inRangeMatch = timelineEntry.id;
+    }
+  }
+  return inRangeMatch ?? fallbackMatch;
 }
 
 export function inferCheckpointTurnCountByTurnId(

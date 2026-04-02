@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveCompletionDividerBeforeEntryId,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   PROVIDER_OPTIONS,
@@ -963,6 +964,82 @@ describe("deriveTimelineEntries", () => {
         implementationThreadId: null,
       },
     });
+  });
+
+  it("anchors the completion divider to latestTurn.assistantMessageId before timestamp fallback", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.makeUnsafe("assistant-earlier"),
+          role: "assistant",
+          text: "progress update",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.makeUnsafe("assistant-final"),
+          role: "assistant",
+          text: "final answer",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [],
+    );
+
+    expect(
+      deriveCompletionDividerBeforeEntryId(entries, {
+        assistantMessageId: MessageId.makeUnsafe("assistant-final"),
+        startedAt: "2026-02-23T00:00:00.000Z",
+        completedAt: "2026-02-23T00:00:02.000Z",
+      }),
+    ).toBe("assistant-final");
+  });
+});
+
+describe("deriveWorkLogEntries context window handling", () => {
+  it("excludes context window updates from the work log", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeActivity({
+          id: "context-1",
+          turnId: "turn-1",
+          kind: "context-window.updated",
+          summary: "Context window updated",
+          tone: "info",
+        }),
+        makeActivity({
+          id: "tool-1",
+          turnId: "turn-1",
+          kind: "tool.completed",
+          summary: "Ran command",
+          tone: "tool",
+        }),
+      ],
+      TurnId.makeUnsafe("turn-1"),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Ran command");
+  });
+
+  it("keeps context compaction activities as normal work log entries", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeActivity({
+          id: "compaction-1",
+          turnId: "turn-1",
+          kind: "context-compaction",
+          summary: "Context compacted",
+          tone: "info",
+        }),
+      ],
+      TurnId.makeUnsafe("turn-1"),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Context compacted");
   });
 });
 

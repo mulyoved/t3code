@@ -3,16 +3,15 @@ import {
   ThreadId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, LoaderCircleIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { toastManager } from "../components/ui/toast";
-import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { useServerKeybindings } from "../rpc/serverState";
 import { useStore } from "../store";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -44,11 +43,9 @@ function DifitRouteView() {
     select: (params) => ThreadId.makeUnsafe(params.threadId),
   });
   const search = Route.useSearch();
-  const threadsHydrated = useStore((store) => store.threadsHydrated);
   const thread = useStore((store) => store.threads.find((entry) => entry.id === threadId) ?? null);
   const api = readNativeApi();
-  const serverConfigQuery = useQuery(serverConfigQueryOptions());
-  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
+  const keybindings = useServerKeybindings() ?? EMPTY_KEYBINDINGS;
   const difitShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "difit.toggle"),
     [keybindings],
@@ -69,13 +66,10 @@ function DifitRouteView() {
   }, [navigate, threadId]);
 
   useEffect(() => {
-    if (!threadsHydrated) {
-      return;
-    }
     if (!thread) {
       void navigate({ to: "/", replace: true });
     }
-  }, [navigate, thread, threadsHydrated]);
+  }, [navigate, thread]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -158,7 +152,7 @@ function DifitRouteView() {
     };
   }, [api, iframeSrc, navigate, search.sessionRevision, thread, thread?.worktreePath, threadId]);
 
-  if (!threadsHydrated || !thread) {
+  if (!thread) {
     return null;
   }
 

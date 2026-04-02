@@ -1,6 +1,3 @@
-import http from "node:http";
-import type { IncomingMessage, ServerResponse } from "node:http";
-
 export const DIFIT_PROXY_PATH_PREFIX = "/__difit";
 
 export interface DifitProxyMatch {
@@ -9,11 +6,11 @@ export interface DifitProxyMatch {
 }
 
 export interface ProxyDifitRequestOptions {
-  readonly request: IncomingMessage;
-  readonly response: ServerResponse;
+  readonly request: Request;
   readonly url: URL;
-  readonly targetPort: number;
+  readonly targetOrigin: string;
   readonly proxyBasePath: string;
+  readonly fetchImpl?: typeof fetch;
 }
 
 function rewriteQuotedAbsolutePaths(source: string, proxyBasePath: string): string {
@@ -73,13 +70,13 @@ export function rewriteDifitTextAsset(
   return rewriteQuotedAbsolutePaths(input, proxyBasePath);
 }
 
-function shouldRewriteResponse(headers: http.IncomingHttpHeaders): boolean {
-  const contentEncoding = headers["content-encoding"];
-  if (typeof contentEncoding === "string" && contentEncoding.length > 0) {
+function shouldRewriteResponse(headers: Headers): boolean {
+  const contentEncoding = headers.get("content-encoding");
+  if (contentEncoding && contentEncoding.length > 0) {
     return false;
   }
-  const contentType = headers["content-type"];
-  if (typeof contentType !== "string") {
+  const contentType = headers.get("content-type");
+  if (!contentType) {
     return false;
   }
   return (
@@ -89,109 +86,65 @@ function shouldRewriteResponse(headers: http.IncomingHttpHeaders): boolean {
   );
 }
 
-function copyProxyHeaders(
-  headers: http.IncomingHttpHeaders,
-  rewrittenBody?: Buffer,
-): http.OutgoingHttpHeaders {
-  const nextHeaders: http.OutgoingHttpHeaders = { ...headers };
-  delete nextHeaders["content-length"];
-  delete nextHeaders["transfer-encoding"];
-  delete nextHeaders.connection;
+function copyProxyHeaders(headers: Headers, rewrittenBody?: Uint8Array): Headers {
+  const nextHeaders = new Headers(headers);
+  nextHeaders.delete("content-length");
+  nextHeaders.delete("transfer-encoding");
+  nextHeaders.delete("connection");
   if (rewrittenBody) {
-    nextHeaders["content-length"] = Buffer.byteLength(rewrittenBody);
+    nextHeaders.set("content-length", String(rewrittenBody.byteLength));
   }
   return nextHeaders;
 }
 
-function filterRequestHeaders(headers: IncomingMessage["headers"], targetPort: number) {
-  const nextHeaders: http.OutgoingHttpHeaders = { ...headers };
-  nextHeaders.host = `127.0.0.1:${targetPort}`;
-  delete nextHeaders.connection;
+function filterRequestHeaders(headers: Headers, targetOrigin: string) {
+  const nextHeaders = new Headers(headers);
+  nextHeaders.set("host", new URL(targetOrigin).host);
+  nextHeaders.delete("connection");
   return nextHeaders;
 }
 
-export async function proxyDifitRequest(options: ProxyDifitRequestOptions): Promise<void> {
-  const { request, response, url, targetPort, proxyBasePath } = options;
+export async function proxyDifitRequest(options: ProxyDifitRequestOptions): Promise<Response> {
+  const { request, url, targetOrigin, proxyBasePath } = options;
+  const fetchImpl = options.fetchImpl ?? fetch;
   const match = matchDifitProxyPath(url.pathname);
   if (!match) {
-    response.writeHead(404, { "Content-Type": "text/plain" });
-    response.end("Not Found");
-    return;
+    return new Response("Not Found", {
+      status: 404,
+      headers: {
+        "Content-Type": "text/plain",
+      },
+    });
   }
 
-  await new Promise<void>((resolve) => {
-    const proxyRequest = http.request(
-      {
-        hostname: "127.0.0.1",
-        port: targetPort,
-        method: request.method,
-        path: `${match.targetPath}${url.search}`,
-        headers: filterRequestHeaders(request.headers, targetPort),
-      },
-      (proxyResponse) => {
-        const shouldRewrite = shouldRewriteResponse(proxyResponse.headers);
-        if (!shouldRewrite || request.method === "HEAD") {
-          response.writeHead(
-            proxyResponse.statusCode ?? 502,
-            copyProxyHeaders(proxyResponse.headers),
-          );
-          proxyResponse.pipe(response);
-          proxyResponse.on("end", () => resolve());
-          return;
-        }
+  const targetUrl = new URL(`${match.targetPath}${url.search}`, targetOrigin);
+  const proxiedRequestInit: RequestInit = {
+    method: request.method,
+    headers: filterRequestHeaders(request.headers, targetOrigin),
+  };
+  if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
+    proxiedRequestInit.body = request.body;
+    proxiedRequestInit.duplex = "half";
+  }
+  const proxiedRequest = new Request(targetUrl.toString(), proxiedRequestInit);
+  const proxiedResponse = await fetchImpl(proxiedRequest);
 
-        const chunks: Buffer[] = [];
-        proxyResponse.on("data", (chunk: Buffer) => {
-          chunks.push(chunk);
-        });
-        proxyResponse.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf8");
-          const rewrittenBody = Buffer.from(
-            rewriteDifitTextAsset(
-              text,
-              proxyBasePath,
-              typeof proxyResponse.headers["content-type"] === "string"
-                ? proxyResponse.headers["content-type"]
-                : null,
-            ),
-          );
-          response.writeHead(
-            proxyResponse.statusCode ?? 502,
-            copyProxyHeaders(proxyResponse.headers, rewrittenBody),
-          );
-          response.end(rewrittenBody);
-          resolve();
-        });
-        proxyResponse.on("error", () => {
-          if (!response.headersSent) {
-            response.writeHead(502, { "Content-Type": "text/plain" });
-          }
-          response.end("Bad Gateway");
-          resolve();
-        });
-      },
-    );
-
-    const closeProxyRequest = () => {
-      proxyRequest.destroy();
-    };
-
-    request.on("aborted", closeProxyRequest);
-    response.on("close", closeProxyRequest);
-
-    proxyRequest.on("error", () => {
-      if (!response.headersSent) {
-        response.writeHead(502, { "Content-Type": "text/plain" });
-      }
-      response.end("Bad Gateway");
-      resolve();
+  if (!shouldRewriteResponse(proxiedResponse.headers) || request.method === "HEAD") {
+    return new Response(proxiedResponse.body, {
+      status: proxiedResponse.status,
+      statusText: proxiedResponse.statusText,
+      headers: copyProxyHeaders(proxiedResponse.headers),
     });
+  }
 
-    if (request.readableEnded || request.method === "GET" || request.method === "HEAD") {
-      proxyRequest.end();
-      return;
-    }
+  const text = await proxiedResponse.text();
+  const rewrittenBody = new TextEncoder().encode(
+    rewriteDifitTextAsset(text, proxyBasePath, proxiedResponse.headers.get("content-type")),
+  );
 
-    request.pipe(proxyRequest);
+  return new Response(rewrittenBody, {
+    status: proxiedResponse.status,
+    statusText: proxiedResponse.statusText,
+    headers: copyProxyHeaders(proxiedResponse.headers, rewrittenBody),
   });
 }

@@ -3,7 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Exit, Schema } from "effect";
 
-import type { PluginBootstrap, PluginListItem } from "@t3tools/contracts";
+import type { PluginBootstrap, PluginListItem, ProjectEntry } from "@t3tools/contracts";
 import type {
   ServerPluginContext,
   ServerPluginFactory,
@@ -11,9 +11,7 @@ import type {
 } from "@t3tools/plugin-sdk";
 import { formatSchemaError } from "@t3tools/shared/schemaJson";
 
-import { createLogger } from "../logger";
 import { listAvailableSkills } from "../skills";
-import { searchWorkspaceEntries } from "../workspaceEntries";
 import { discoverPluginRoots, loadPluginManifest } from "./discovery";
 import type { DiscoveredPluginManifest, LoadedPluginProcedure, LoadedPluginState } from "./types";
 
@@ -48,11 +46,203 @@ function comparePluginListItems(left: PluginListItem, right: PluginListItem): nu
   return left.id.localeCompare(right.id);
 }
 
+function createLogger(scope: string) {
+  const prefix = `[${scope}]`;
+  return {
+    info: (...args: unknown[]) => console.info(prefix, ...args),
+    warn: (...args: unknown[]) => console.warn(prefix, ...args),
+    error: (...args: unknown[]) => console.error(prefix, ...args),
+  };
+}
+
 function safeMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
   return String(error);
+}
+
+const WORKSPACE_SEARCH_MAX_ENTRIES = 25_000;
+const WORKSPACE_SEARCH_IGNORED_DIRECTORY_NAMES = new Set([
+  ".git",
+  ".convex",
+  "node_modules",
+  ".next",
+  ".turbo",
+  "dist",
+  "build",
+  "out",
+  ".cache",
+]);
+
+function parentPathOf(input: string): string | undefined {
+  const separatorIndex = input.lastIndexOf("/");
+  if (separatorIndex === -1) {
+    return undefined;
+  }
+  return input.slice(0, separatorIndex);
+}
+
+function normalizeWorkspaceSearchQuery(input: string): string {
+  return input
+    .trim()
+    .replace(/^[@./]+/, "")
+    .toLowerCase();
+}
+
+function basenameOfPath(input: string): string {
+  const separatorIndex = input.lastIndexOf("/");
+  if (separatorIndex === -1) {
+    return input;
+  }
+  return input.slice(separatorIndex + 1);
+}
+
+function scoreSubsequenceMatch(value: string, query: string): number | null {
+  if (!query) return 0;
+
+  let queryIndex = 0;
+  let firstMatchIndex = -1;
+  let previousMatchIndex = -1;
+  let gapPenalty = 0;
+
+  for (let valueIndex = 0; valueIndex < value.length; valueIndex += 1) {
+    if (value[valueIndex] !== query[queryIndex]) {
+      continue;
+    }
+
+    if (firstMatchIndex === -1) {
+      firstMatchIndex = valueIndex;
+    }
+    if (previousMatchIndex !== -1) {
+      gapPenalty += valueIndex - previousMatchIndex - 1;
+    }
+
+    previousMatchIndex = valueIndex;
+    queryIndex += 1;
+    if (queryIndex === query.length) {
+      const spanPenalty = valueIndex - firstMatchIndex + 1 - query.length;
+      const lengthPenalty = Math.min(64, value.length - query.length);
+      return firstMatchIndex * 2 + gapPenalty * 3 + spanPenalty + lengthPenalty;
+    }
+  }
+
+  return null;
+}
+
+function scoreWorkspaceEntry(entry: ProjectEntry, query: string): number | null {
+  if (!query) {
+    return entry.kind === "directory" ? 0 : 1;
+  }
+
+  const normalizedPath = entry.path.toLowerCase();
+  const normalizedName = basenameOfPath(normalizedPath);
+
+  if (normalizedName === query) return 0;
+  if (normalizedPath === query) return 1;
+  if (normalizedName.startsWith(query)) return 2;
+  if (normalizedPath.startsWith(query)) return 3;
+  if (normalizedPath.includes(`/${query}`)) return 4;
+  if (normalizedName.includes(query)) return 5;
+  if (normalizedPath.includes(query)) return 6;
+
+  const nameFuzzyScore = scoreSubsequenceMatch(normalizedName, query);
+  if (nameFuzzyScore !== null) {
+    return 100 + nameFuzzyScore;
+  }
+
+  const pathFuzzyScore = scoreSubsequenceMatch(normalizedPath, query);
+  if (pathFuzzyScore !== null) {
+    return 200 + pathFuzzyScore;
+  }
+
+  return null;
+}
+
+async function searchWorkspaceEntries(input: {
+  cwd: string;
+  query: string;
+  limit: number;
+}): Promise<{ entries: ProjectEntry[]; truncated: boolean }> {
+  const entries: ProjectEntry[] = [];
+  let scannedCount = 0;
+  let truncated = false;
+
+  const walk = async (directoryPath: string, relativePrefix = ""): Promise<void> => {
+    if (truncated) {
+      return;
+    }
+
+    const dirEntries = await fs.promises
+      .readdir(directoryPath, { withFileTypes: true })
+      .catch(() => []);
+
+    for (const dirEntry of dirEntries.toSorted((left, right) =>
+      left.name.localeCompare(right.name),
+    )) {
+      if (truncated) {
+        return;
+      }
+
+      if (dirEntry.isDirectory() && WORKSPACE_SEARCH_IGNORED_DIRECTORY_NAMES.has(dirEntry.name)) {
+        continue;
+      }
+
+      const relativePath = relativePrefix ? `${relativePrefix}/${dirEntry.name}` : dirEntry.name;
+      const absolutePath = path.join(directoryPath, dirEntry.name);
+
+      if (dirEntry.isDirectory()) {
+        entries.push({
+          path: relativePath,
+          kind: "directory",
+          ...(parentPathOf(relativePath) ? { parentPath: parentPathOf(relativePath) } : {}),
+        });
+        scannedCount += 1;
+        if (scannedCount >= WORKSPACE_SEARCH_MAX_ENTRIES) {
+          truncated = true;
+          return;
+        }
+        await walk(absolutePath, relativePath);
+        continue;
+      }
+
+      if (!dirEntry.isFile()) {
+        continue;
+      }
+
+      entries.push({
+        path: relativePath,
+        kind: "file",
+        ...(parentPathOf(relativePath) ? { parentPath: parentPathOf(relativePath) } : {}),
+      });
+      scannedCount += 1;
+      if (scannedCount >= WORKSPACE_SEARCH_MAX_ENTRIES) {
+        truncated = true;
+        return;
+      }
+    }
+  };
+
+  await walk(input.cwd);
+
+  const normalizedQuery = normalizeWorkspaceSearchQuery(input.query);
+  const limit = Math.max(0, Math.floor(input.limit));
+  const rankedEntries = entries
+    .map((entry) => ({
+      entry,
+      score: scoreWorkspaceEntry(entry, normalizedQuery),
+    }))
+    .filter(
+      (candidate): candidate is { entry: ProjectEntry; score: number } => candidate.score !== null,
+    )
+    .toSorted(
+      (left, right) => left.score - right.score || left.entry.path.localeCompare(right.entry.path),
+    );
+
+  return {
+    entries: rankedEntries.slice(0, limit).map((candidate) => candidate.entry),
+    truncated: truncated || rankedEntries.length > limit,
+  };
 }
 
 async function maybeCallCleanup(cleanup: (() => void | Promise<void>) | undefined): Promise<void> {
